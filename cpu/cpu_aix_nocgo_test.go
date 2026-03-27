@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,4 +87,28 @@ func TestTimesWithContextAndInterval_Aggregate(t *testing.T) {
 	assert.InDelta(t, 3.0, stats[0].System, 0.01)
 	assert.InDelta(t, 0.0, stats[0].Iowait, 0.01)
 	assert.InDelta(t, 96.0, stats[0].Idle, 0.01)
+}
+
+func TestInfoWithContext(t *testing.T) {
+	origInvoke := invoke
+	invoke = testInvoker{}
+	// InfoWithContext caches prtconf output via prtconfOnce; reset it so the
+	// fixture invoker is used even if a prior call already populated the cache.
+	prtconfOnce = sync.Once{}
+	defer func() {
+		invoke = origInvoke
+		prtconfOnce = sync.Once{}
+	}()
+
+	info, err := InfoWithContext(context.Background())
+	require.NoError(t, err)
+	require.Len(t, info, 1)
+
+	c := info[0]
+	assert.Equal(t, "IBM pSeries (emulated by qemu)", c.VendorID)
+	assert.Equal(t, "PowerPC", c.Family)
+	assert.Equal(t, "POWER8", c.Model)
+	assert.Equal(t, "PowerPC_POWER8", c.ModelName)
+	assert.Equal(t, int32(4), c.Cores)
+	assert.InDelta(t, 1000.0, c.Mhz, 0.01)
 }
