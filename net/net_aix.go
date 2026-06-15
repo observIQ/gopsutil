@@ -97,7 +97,16 @@ func parseNetstatS(output string, protocols []string) ([]ProtoCountersStat, erro
 		// Normalise: remove parenthetical sub-counts like "(6302116893 bytes)".
 		desc := normaliseNetstatDesc(strings.TrimSpace(rest[spaceIdx+1:]))
 
-		if key := aixProtoKey(currentProto, depth, desc); key != "" {
+		// Superset contract: counters with a MIB-II equivalent use the canonical
+		// MIB-II key (PascalCase, e.g. "InSegs"), matching Linux. Counters unique
+		// to AIX that have no MIB-II equivalent are still exposed, under a native
+		// key derived from the netstat description (camelCase, e.g. "packetsSent"),
+		// rather than being dropped. The two key styles never collide.
+		key := aixProtoKey(currentProto, depth, desc)
+		if key == "" {
+			key = descToCamelCase(desc)
+		}
+		if key != "" {
 			currentStats[key] += val
 		}
 	}
@@ -529,4 +538,42 @@ func ConnectionsPidMaxWithoutUidsWithContext(ctx context.Context, kind string, p
 
 func connectionsPidMaxWithoutUidsWithContext(_ context.Context, _ string, _ int32, _ int, _ bool) ([]ConnectionStat, error) {
 	return []ConnectionStat{}, common.ErrNotImplementedError
+}
+
+// descToCamelCase converts an AIX "netstat -s" counter description into a
+// camelCase key, used for AIX-native counters that have no MIB-II equivalent
+// (the superset contract in parseNetstatS). Parenthetical sub-counts are
+// stripped and any non-alphanumeric run is treated as a word boundary, e.g.
+// "data packets (3187866062 bytes)" -> "dataPackets", "ack-only" -> "ackOnly".
+func descToCamelCase(desc string) string {
+	if idx := strings.IndexByte(desc, '('); idx > 0 {
+		desc = strings.TrimSpace(desc[:idx])
+	}
+
+	cleaned := make([]byte, len(desc))
+	for i := 0; i < len(desc); i++ {
+		c := desc[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' {
+			cleaned[i] = c
+		} else {
+			cleaned[i] = ' '
+		}
+	}
+	desc = string(cleaned)
+
+	words := strings.Fields(desc)
+	if len(words) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, w := range words {
+		w = strings.ToLower(w)
+		if i == 0 {
+			b.WriteString(w)
+		} else {
+			b.WriteString(strings.ToUpper(w[:1]) + w[1:])
+		}
+	}
+	return b.String()
 }
