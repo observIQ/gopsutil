@@ -2,6 +2,23 @@
 
 [![Test](https://github.com/shirou/gopsutil/actions/workflows/test.yml/badge.svg)](https://github.com/shirou/gopsutil/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/shirou/gopsutil/v4.svg)](https://pkg.go.dev/github.com/shirou/gopsutil/v4) [![Calendar Versioning](https://img.shields.io/badge/calver-vMAJOR.YY.MM-22bfda.svg)](https://calver.org/)
 
+> [!IMPORTANT]
+> **This is Bindplane's fork of [`shirou/gopsutil`](https://github.com/shirou/gopsutil).** It tracks upstream and adds capabilities beyond upstream's intended scope. See [Why this fork exists](#why-this-fork-exists).
+
+## Why this fork exists
+
+[`shirou/gopsutil`](https://github.com/shirou/gopsutil) is a widely-used library, and this fork builds directly on it. Bindplane maintains a separate fork for two reasons.
+
+**1. Scope.** Upstream's goal is a faithful Go port of [psutil](https://github.com/giampaolo/psutil): parity with psutil's API, and generally nothing beyond it. This fork's goal is a superset that aims to be equivalent to or better than psutil. We attempt to match psutil where it has an equivalent. Where psutil is poorly designed or buggy, we aim to improve on it rather than copy the flaw. We also add capability psutil does not have, such as broader platform support (for example AIX) and metrics psutil does not expose. Those additions and improvements fall outside upstream's intended scope.
+
+**2. Review throughput.** Upstream is maintained by a single maintainer with limited review bandwidth. In practice that means long review cycles. For the volume of platform work we need to land on a business-critical timeline, that cadence was not workable. Maintaining our own fork lets us review and ship changes on a schedule that meets our needs.
+
+This fork periodically merges changes from `shirou/gopsutil` to stay current. Many of our additions are a superset: they extend upstream without removing anything. Existing consumers stay compatible and need not use what we add. We attempt to remain API compatible with upstream, but do not guarantee it. Some changes may diverge from upstream in a breaking way, now or in the future.
+
+## Contributing
+
+This fork accepts contributions as a single PR or a stack of PRs (we recommend [git-town](https://www.git-town.com/) for stacks). See [CONTRIBUTING.md](CONTRIBUTING.md) for the process.
+
 This is a port of psutil (https://github.com/giampaolo/psutil). The
 challenge is porting all psutil functions on some architectures.
 
