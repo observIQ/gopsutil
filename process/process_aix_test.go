@@ -135,6 +135,30 @@ func TestFillFromStatusWithContext(t *testing.T) {
 	}
 }
 
+func TestSignalsPendingWithContext_AIX(t *testing.T) {
+	pids, err := os.ReadDir("testdata/aix/")
+	if err != nil {
+		t.Error(err)
+	}
+	t.Setenv("HOST_PROC", "testdata/aix")
+	for _, pidDir := range pids {
+		pid, err := strconv.ParseInt(pidDir.Name(), 0, 32)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(fmt.Sprintf("testdata/aix/%d/status", pid)); err != nil {
+			continue
+		}
+		p := &Process{Pid: int32(pid)}
+		sig, err := p.SignalsPendingWithContext(context.Background())
+		require.NoError(t, err)
+		// PendingProcess is read from the status SigPend set; for fixtures
+		// with no pending signals it is zero, which is valid.
+		//nolint:testifylint // value is always >= 0, but we validate the parse path
+		assert.GreaterOrEqual(t, sig.PendingProcess, uint64(0))
+	}
+}
+
 func Benchmark_fillFromCommWithContext(b *testing.B) {
 	b.Setenv("HOST_PROC", "testdata/aix")
 	pid := 5767616

@@ -760,3 +760,7 @@ func parseEnviron(args []byte, nargs int) []string {
 
 	return envSlice
 }
+
+func (*Process) SignalsPendingWithContext(_ context.Context) (SignalInfoStat, error) {
+	return SignalInfoStat{}, common.ErrNotImplementedError
+}

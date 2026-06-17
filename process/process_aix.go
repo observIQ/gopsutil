@@ -1439,6 +1439,10 @@ func (p *Process) fillFromStatusWithContext(ctx context.Context) error {
 			return err
 		}
 
+		// Pending process-level signals from the status SigPend set.
+		// SsSet[0] covers signals 1-64.
+		p.sigInfo.PendingProcess = aixStat.SigPend.SsSet[0]
+
 		// Extract process state
 		p.status = convertStatusChar(string([]byte{aixStat.Stat}))
 		// Recognize AIX-specific status codes if the converted value is empty
@@ -1501,6 +1505,21 @@ func (p *Process) fillFromStatusWithContext(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SignalsPendingWithContext returns the process-level pending signals for the
+// process, read from the AIX status file's SigPend set via
+// fillFromStatusWithContext. Mirrors the Linux implementation, which returns
+// the same sigInfo populated from /proc.
+func (p *Process) SignalsPendingWithContext(ctx context.Context) (SignalInfoStat, error) {
+	err := p.fillFromStatusWithContext(ctx)
+	if err != nil {
+		return SignalInfoStat{}, err
+	}
+	if p.sigInfo == nil {
+		return SignalInfoStat{}, nil
+	}
+	return *p.sigInfo, nil
 }
 
 func (p *Process) fillFromTIDStat(tid int32) (uint64, int32, *cpu.TimesStat, int64, uint32, int32, *PageFaultsStat, error) {
