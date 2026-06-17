@@ -1,0 +1,60 @@
+
+Server rpc:
+Connection oriented
+calls      badcalls   nullrecv   badlen     xdrcall    dupchecks  dupreqs    
+0          0          0          0          0          0          0          
+Connectionless
+calls      badcalls   nullrecv   badlen     xdrcall    dupchecks  dupreqs    
+0          0          0          0          0          0          0          
+
+Server nfs:
+calls      badcalls   public_v2  public_v3  
+0          0          0          0          
+Version 2: (0 calls)
+null       getattr    setattr    root       lookup     readlink   read       
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+wrcache    write      create     remove     rename     link       symlink    
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+mkdir      rmdir      readdir    statfs     
+0 0%       0 0%       0 0%       0 0%       
+Version 3: (0 calls)
+null       getattr    setattr    lookup     access     readlink   read       
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+write      create     mkdir      symlink    mknod      remove     rmdir      
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+rename     link       readdir    readdir+   fsstat     fsinfo     pathconf   
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+commit     
+0 0%       
+
+Client rpc:
+Connection oriented
+calls      badcalls   badxids    timeouts   newcreds   badverfs   timers     
+0          0          0          0          0          0          0          
+nomem      cantconn   interrupts 
+0          0          0          
+Connectionless
+calls      badcalls   retrans    badxids    timeouts   newcreds   badverfs   
+12         0          0          0          0          0          0          
+timers     nomem      cantsend   
+0          0          0          
+
+Client nfs:
+calls      badcalls   clgets     cltoomany  
+0          0          0          0          
+Version 2: (0 calls)
+null       getattr    setattr    root       lookup     readlink   read       
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+wrcache    write      create     remove     rename     link       symlink    
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+mkdir      rmdir      readdir    statfs     
+0 0%       0 0%       0 0%       0 0%       
+Version 3: (0 calls)
+null       getattr    setattr    lookup     access     readlink   read       
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+write      create     mkdir      symlink    mknod      remove     rmdir      
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+rename     link       readdir    readdir+   fsstat     fsinfo     pathconf   
+0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       0 0%       
+commit     
+0 0%       
