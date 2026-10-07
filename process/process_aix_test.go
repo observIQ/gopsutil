@@ -5,11 +5,13 @@ package process
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -404,6 +406,126 @@ func TestIOCountersWithContext(t *testing.T) {
 		//nolint:testifylint // checking non-negative constraint
 		assert.GreaterOrEqual(t, ioCounters.WriteBytes, uint64(0))
 	}
+}
+
+// diskIOInvoker answers wlmcntrl -q and ps with canned output and records each command it runs.
+type diskIOInvoker struct {
+	wlm   string
+	ps    []string // successive ps outputs; the last one repeats
+	calls []string
+}
+
+func (f *diskIOInvoker) Command(name string, arg ...string) ([]byte, error) {
+	return f.CommandWithContext(context.Background(), name, arg...)
+}
+
+func (f *diskIOInvoker) CommandWithContext(_ context.Context, name string, _ ...string) ([]byte, error) {
+	f.calls = append(f.calls, name)
+	switch name {
+	case "wlmcntrl":
+		if strings.Contains(f.wlm, "stopped") {
+			return []byte(f.wlm), errors.New("exit status 1")
+		}
+		return []byte(f.wlm), errors.New("exit status 2")
+	case "ps":
+		n := 0
+		for _, c := range f.calls {
+			if c == "ps" {
+				n++
+			}
+		}
+		return []byte(f.ps[min(n, len(f.ps))-1]), nil
+	}
+	return nil, fmt.Errorf("unexpected command %s", name)
+}
+
+func (f *diskIOInvoker) count(name string) int {
+	n := 0
+	for _, c := range f.calls {
+		if c == name {
+			n++
+		}
+	}
+	return n
+}
+
+// useDiskIOFake swaps in a fake invoker and clock, and clears the shared snapshot.
+func useDiskIOFake(t *testing.T, f *diskIOInvoker) *time.Time {
+	t.Helper()
+	origInvoke, origNow := invoke, aixNow
+	now := time.Unix(1000, 0)
+	invoke, aixNow = f, func() time.Time { return now }
+	resetAIXDiskIO()
+	t.Cleanup(func() { invoke, aixNow = origInvoke, origNow; resetAIXDiskIO() })
+	return &now
+}
+
+const wlmRunningMode = "WLM is running in passive mode\n"
+
+func TestIOCountersWithContext_WLMStopped(t *testing.T) {
+	f := &diskIOInvoker{wlm: "WLM is stopped\n", ps: []string{"       1       -\n"}}
+	useDiskIOFake(t, f)
+
+	_, err := (&Process{Pid: 1}).IOCountersWithContext(context.Background())
+	require.ErrorIs(t, err, errAIXWLMNotRunning)
+	assert.Equal(t, 0, f.count("ps"), "ps should not run while WLM is stopped")
+}
+
+func TestIOCountersWithContext_OneSnapshotForAllProcesses(t *testing.T) {
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1      10\n      42     555\n"}}
+	useDiskIOFake(t, f)
+	ctx := context.Background()
+
+	io1, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+	io42, err := (&Process{Pid: 42}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(10), io1.ReadBytes)
+	assert.Equal(t, uint64(555), io42.ReadBytes)
+	assert.Equal(t, 1, f.count("ps"))
+	assert.Equal(t, 1, f.count("wlmcntrl"))
+}
+
+func TestIOCountersWithContext_StaleSnapshotRefreshes(t *testing.T) {
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1      10\n", "       1      20\n"}}
+	now := useDiskIOFake(t, f)
+	ctx := context.Background()
+
+	io, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10), io.ReadBytes)
+
+	*now = now.Add(aixDiskIOMaxAge)
+	io, err = (&Process{Pid: 1}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(20), io.ReadBytes)
+	assert.Equal(t, 2, f.count("ps"))
+}
+
+func TestIOCountersWithContext_NewProcessRefreshesOnce(t *testing.T) {
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1      10\n", "       1      10\n       7       3\n"}}
+	useDiskIOFake(t, f)
+	ctx := context.Background()
+
+	_, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+	io, err := (&Process{Pid: 7}).IOCountersWithContext(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(3), io.ReadBytes)
+
+	_, err = (&Process{Pid: 99}).IOCountersWithContext(ctx)
+	require.ErrorIs(t, err, ErrorProcessNotRunning)
+	assert.Equal(t, 3, f.count("ps"), "a PID missing from a fresh snapshot should not trigger another ps")
+}
+
+func TestIOCountersWithContext_NoDataForProcess(t *testing.T) {
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1       -\n"}}
+	useDiskIOFake(t, f)
+
+	_, err := (&Process{Pid: 1}).IOCountersWithContext(context.Background())
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, errAIXWLMNotRunning)
 }
 
 func TestCPUAffinityWithContext(t *testing.T) {
