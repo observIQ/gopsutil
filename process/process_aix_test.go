@@ -461,8 +461,8 @@ func useDiskIOFake(t *testing.T, f *diskIOInvoker) *time.Time {
 	origInvoke, origNow := invoke, aixNow
 	now := time.Unix(1000, 0)
 	invoke, aixNow = f, func() time.Time { return now }
-	resetAIXDiskIO()
-	t.Cleanup(func() { invoke, aixNow = origInvoke, origNow; resetAIXDiskIO() })
+	resetAIXPS()
+	t.Cleanup(func() { invoke, aixNow = origInvoke, origNow; resetAIXPS() })
 	return &now
 }
 
@@ -502,7 +502,7 @@ func TestIOCountersWithContext_StaleSnapshotRefreshes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(10), io.ReadBytes)
 
-	*now = now.Add(aixDiskIOMaxAge)
+	*now = now.Add(aixPSMaxAge)
 	io, err = (&Process{Pid: 1}).IOCountersWithContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(20), io.ReadBytes)
