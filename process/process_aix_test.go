@@ -162,6 +162,8 @@ func TestFillFromTIDStatWithContext_AIX(t *testing.T) {
 		t.Error(err)
 	}
 	t.Setenv("HOST_PROC", "testdata/aix")
+	// Page faults come from ps, which knows nothing of fixture PIDs, so stand in for it
+	useDiskIOFake(t, &diskIOInvoker{wlm: wlmRunningMode, ps: []string{fmt.Sprintf("1 0 0\n%d 0 0\n%d 0 0\n", fixturePID, otherFixturePID)}})
 	for _, pid := range pids {
 		pid, err := strconv.ParseInt(pid.Name(), 0, 32)
 		if err != nil {
@@ -250,8 +252,8 @@ func TestFillFromExeWithContext(t *testing.T) {
 		if _, err := os.Stat(psinfo); err != nil {
 			continue
 		}
-		p, err := NewProcess(int32(pid))
-		require.NoError(t, err)
+		// Fixture PIDs are not running here, so NewProcess reports that; the fill reads the fixture files regardless
+		p, _ := NewProcess(int32(pid))
 		exe, err := p.fillFromExeWithContext(context.Background())
 		if err == nil {
 			// Should get a string (possibly empty or with executable name)
@@ -275,8 +277,8 @@ func TestFillFromCmdlineWithContext(t *testing.T) {
 		if _, err := os.Stat(psinfo); err != nil {
 			continue
 		}
-		p, err := NewProcess(int32(pid))
-		require.NoError(t, err)
+		// Fixture PIDs are not running here, so NewProcess reports that; the fill reads the fixture files regardless
+		p, _ := NewProcess(int32(pid))
 		cmdline, err := p.fillFromCmdlineWithContext(context.Background())
 		if err == nil {
 			// Should get a string (possibly empty or with command line)
@@ -300,8 +302,8 @@ func TestFillFromCmdlineSliceWithContext(t *testing.T) {
 		if _, err := os.Stat(psinfo); err != nil {
 			continue
 		}
-		p, err := NewProcess(int32(pid))
-		require.NoError(t, err)
+		// Fixture PIDs are not running here, so NewProcess reports that; the fill reads the fixture files regardless
+		p, _ := NewProcess(int32(pid))
 		cmdlineSlice, err := p.fillSliceFromCmdlineWithContext(context.Background())
 		if err == nil {
 			// Should get a slice of strings
@@ -325,8 +327,8 @@ func TestFillFromStatmWithContext(t *testing.T) {
 		if _, err := os.Stat(psinfo); err != nil {
 			continue
 		}
-		p, err := NewProcess(int32(pid))
-		require.NoError(t, err)
+		// Fixture PIDs are not running here, so NewProcess reports that; the fill reads the fixture files regardless
+		p, _ := NewProcess(int32(pid))
 		memInfo, memInfoEx, err := p.fillFromStatmWithContext(context.Background())
 		if err == nil {
 			assert.NotNil(t, memInfo)
