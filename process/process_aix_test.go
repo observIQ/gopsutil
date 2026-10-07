@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -410,16 +411,17 @@ func TestIOCountersWithContext(t *testing.T) {
 
 // diskIOInvoker answers wlmcntrl -q and ps with canned output and records each command it runs.
 type diskIOInvoker struct {
-	wlm   string
-	ps    []string // successive ps outputs; the last one repeats
-	calls []string
+	wlm    string
+	ps     []string // successive ps outputs; the last one repeats
+	kernel string   // extra ps lines for kernel processes, which AIX ps lists only with -k
+	calls  []string
 }
 
 func (f *diskIOInvoker) Command(name string, arg ...string) ([]byte, error) {
 	return f.CommandWithContext(context.Background(), name, arg...)
 }
 
-func (f *diskIOInvoker) CommandWithContext(_ context.Context, name string, _ ...string) ([]byte, error) {
+func (f *diskIOInvoker) CommandWithContext(_ context.Context, name string, arg ...string) ([]byte, error) {
 	f.calls = append(f.calls, name)
 	switch name {
 	case "wlmcntrl":
@@ -434,7 +436,11 @@ func (f *diskIOInvoker) CommandWithContext(_ context.Context, name string, _ ...
 				n++
 			}
 		}
-		return []byte(f.ps[min(n, len(f.ps))-1]), nil
+		out := f.ps[min(n, len(f.ps))-1]
+		if slices.ContainsFunc(arg, func(a string) bool { return strings.HasPrefix(a, "-") && strings.Contains(a, "k") }) {
+			out += f.kernel
+		}
+		return []byte(out), nil
 	}
 	return nil, fmt.Errorf("unexpected command %s", name)
 }
@@ -517,6 +523,16 @@ func TestIOCountersWithContext_NewProcessRefreshesOnce(t *testing.T) {
 	_, err = (&Process{Pid: 99}).IOCountersWithContext(ctx)
 	require.ErrorIs(t, err, ErrorProcessNotRunning)
 	assert.Equal(t, 3, f.count("ps"), "a PID missing from a fresh snapshot should not trigger another ps")
+}
+
+func TestIOCountersWithContext_KernelProcessInSnapshot(t *testing.T) {
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1      10\n"}, kernel: "     260       0\n"}
+	useDiskIOFake(t, f)
+
+	io, err := (&Process{Pid: 260}).IOCountersWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0), io.ReadBytes)
+	assert.Equal(t, 1, f.count("ps"), "kernel processes should come from the same snapshot")
 }
 
 func TestIOCountersWithContext_NoDataForProcess(t *testing.T) {
