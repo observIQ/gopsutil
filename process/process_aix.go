@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/internal/common"
@@ -34,6 +35,17 @@ var aixBitnessCache sync.Map // map[int32]int64
 // aixIOStatChecked caches whether sys0 iostat=true has been verified.
 // 0 = unchecked, 1 = enabled, 2 = disabled
 var aixIOStatChecked int32
+
+// AIX reports per-process disk I/O (ps tdiskio) only while Workload Manager runs; otherwise every process shows "-".
+var errAIXWLMNotRunning = errors.New("per-process disk I/O needs AIX Workload Manager running (start it with wlmcntrl -p)")
+
+// aixDiskIOMaxAge is how long one ps snapshot of every process's disk I/O is reused,
+// so a scrape costs one ps instead of one per process. The counters only grow, so a reading this old is fine.
+const aixDiskIOMaxAge = time.Second
+
+var aixNow = time.Now
+
+func resetAIXDiskIO() {}
 
 const prioProcess = 0 // linux/resource.h
 
