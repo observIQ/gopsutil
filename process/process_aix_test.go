@@ -535,6 +535,17 @@ func TestIOCountersWithContext_KernelProcessInSnapshot(t *testing.T) {
 	assert.Equal(t, 1, f.count("ps"), "kernel processes should come from the same snapshot")
 }
 
+func TestIOCountersWithContext_ZombieReadsZero(t *testing.T) {
+	// ps prints a zombie with an empty tdiskio column, so its line has only the PID
+	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1      10\n 1638710        \n"}}
+	useDiskIOFake(t, f)
+
+	io, err := (&Process{Pid: 1638710}).IOCountersWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, IOCountersStat{}, *io)
+	assert.Equal(t, 1, f.count("ps"), "a zombie is in the snapshot, so it should not trigger another ps")
+}
+
 func TestIOCountersWithContext_NoDataForProcess(t *testing.T) {
 	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"       1       -\n"}}
 	useDiskIOFake(t, f)
