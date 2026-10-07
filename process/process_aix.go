@@ -68,14 +68,18 @@ func refreshAIXDiskIO(ctx context.Context) error {
 		}
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
-			if len(fields) < 2 {
+			if len(fields) == 0 {
 				continue
 			}
 			pid, err := strconv.ParseInt(fields[0], 10, 32)
 			if err != nil {
 				continue
 			}
-			byPID[int32(pid)] = fields[1]
+			// A zombie's tdiskio column is empty, so its line holds only the PID
+			byPID[int32(pid)] = ""
+			if len(fields) > 1 {
+				byPID[int32(pid)] = fields[1]
+			}
 		}
 	}
 	aixDiskIO.taken, aixDiskIO.wlmOn, aixDiskIO.byPID, aixDiskIO.loaded = aixNow(), wlmOn, byPID, true
@@ -502,6 +506,11 @@ func (p *Process) IOCountersWithContext(ctx context.Context) (*IOCountersStat, e
 	ioCountStr, err := aixDiskIOFor(ctx, p.Pid)
 	if err != nil {
 		return nil, err
+	}
+
+	// A zombie does no more I/O, so report zero rather than an error, as the other zombie fallbacks do
+	if ioCountStr == "" {
+		return &IOCountersStat{}, nil
 	}
 
 	// Check for hyphen (unavailable data)
