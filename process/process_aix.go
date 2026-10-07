@@ -40,12 +40,19 @@ const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
 
-// aixPS is the shared ps snapshot. byPID holds tdiskio as ps printed it, "-" included.
+// aixPSEntry is one process's row in the snapshot, each column as ps printed it.
+// tdiskio is "-" while WLM is not running; a zombie prints both columns empty.
+type aixPSEntry struct {
+	pagein  string
+	tdiskio string
+}
+
+// aixPS is the shared ps snapshot behind disk I/O and page faults.
 var aixPS struct {
 	sync.Mutex
 	taken  time.Time
 	wlmOn  bool
-	byPID  map[int32]string
+	byPID  map[int32]aixPSEntry
 	loaded bool
 }
 
@@ -60,61 +67,69 @@ func refreshAIXPS(ctx context.Context) error {
 	// wlmcntrl -q exits non-zero when WLM is stopped (1) or passive (2), so read its message rather than its status
 	out, _ := invoke.CommandWithContext(ctx, "wlmcntrl", "-q")
 	wlmOn := strings.Contains(string(out), "WLM is running")
-	byPID := map[int32]string{}
-	if wlmOn {
-		out, err := invoke.CommandWithContext(ctx, "ps", "-ek", "-o", "pid=,tdiskio=") // -k adds kernel processes, which -e leaves out
+	// -k adds kernel processes, which -e leaves out. pagein needs no WLM, so ps runs either way.
+	out, err := invoke.CommandWithContext(ctx, "ps", "-ek", "-o", "pid=,pagein=,tdiskio=")
+	if err != nil {
+		return err
+	}
+	byPID := map[int32]aixPSEntry{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		pid, err := strconv.ParseInt(fields[0], 10, 32)
 		if err != nil {
-			return err
+			continue
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			pid, err := strconv.ParseInt(fields[0], 10, 32)
-			if err != nil {
-				continue
-			}
-			// A zombie's tdiskio column is empty, so its line holds only the PID
-			byPID[int32(pid)] = ""
-			if len(fields) > 1 {
-				byPID[int32(pid)] = fields[1]
-			}
+		var e aixPSEntry
+		if len(fields) > 1 {
+			e.pagein = fields[1]
 		}
+		if len(fields) > 2 {
+			e.tdiskio = fields[2]
+		}
+		byPID[int32(pid)] = e
 	}
 	aixPS.taken, aixPS.wlmOn, aixPS.byPID, aixPS.loaded = aixNow(), wlmOn, byPID, true
 	return nil
 }
 
-// aixDiskIOFor returns pid's tdiskio from a snapshot at most aixPSMaxAge old.
+// aixPSFor returns pid's row from a snapshot at most aixPSMaxAge old, and whether WLM was running when it was taken.
 // A PID missing from an older snapshot (a process started since) retakes it once.
-func aixDiskIOFor(ctx context.Context, pid int32) (string, error) {
+func aixPSFor(ctx context.Context, pid int32) (aixPSEntry, bool, error) {
 	aixPS.Lock()
 	defer aixPS.Unlock()
 	fresh := false
 	if !aixPS.loaded || aixNow().Sub(aixPS.taken) >= aixPSMaxAge {
 		if err := refreshAIXPS(ctx); err != nil {
-			return "", err
+			return aixPSEntry{}, false, err
 		}
 		fresh = true
 	}
-	if !aixPS.wlmOn {
-		return "", errAIXWLMNotRunning
-	}
-	v, ok := aixPS.byPID[pid]
+	e, ok := aixPS.byPID[pid]
 	if !ok && !fresh {
 		if err := refreshAIXPS(ctx); err != nil {
-			return "", err
+			return aixPSEntry{}, false, err
 		}
-		if !aixPS.wlmOn {
-			return "", errAIXWLMNotRunning
-		}
-		v, ok = aixPS.byPID[pid]
+		e, ok = aixPS.byPID[pid]
 	}
 	if !ok {
-		return "", ErrorProcessNotRunning
+		return aixPSEntry{}, aixPS.wlmOn, ErrorProcessNotRunning
 	}
-	return v, nil
+	return e, aixPS.wlmOn, nil
+}
+
+// aixDiskIOFor returns pid's tdiskio, or errAIXWLMNotRunning when WLM is not running.
+func aixDiskIOFor(ctx context.Context, pid int32) (string, error) {
+	e, wlmOn, err := aixPSFor(ctx, pid)
+	if !wlmOn {
+		return "", errAIXWLMNotRunning
+	}
+	if err != nil {
+		return "", err
+	}
+	return e.tdiskio, nil
 }
 
 const prioProcess = 0 // linux/resource.h
@@ -1623,15 +1638,14 @@ func (p *Process) fillFromTIDStatWithContext(ctx context.Context, tid int32) (ui
 // Uses `ps -o pagein=` which returns the cumulative major page-in count.
 // AIX does not expose minor faults separately.
 func (p *Process) getPageFaults(ctx context.Context) (*PageFaultsStat, error) {
-	//nolint:gosec // Process ID from internal tracking, not untrusted input
-	cmd := exec.CommandContext(ctx, "ps", "-o", "pagein=", "-p", strconv.Itoa(int(p.Pid)))
-	output, err := cmd.Output()
+	e, _, err := aixPSFor(ctx, p.Pid)
 	if err != nil {
 		return nil, err
 	}
 
+	// A zombie's pagein is empty, so it reads as zero like the other zombie fallbacks
 	pageFaults := &PageFaultsStat{}
-	if pagein, err := strconv.ParseUint(strings.TrimSpace(string(output)), 10, 64); err == nil {
+	if pagein, err := strconv.ParseUint(e.pagein, 10, 64); err == nil {
 		pageFaults.MajorFaults = pagein
 	}
 
