@@ -62,7 +62,7 @@ func refreshAIXDiskIO(ctx context.Context) error {
 	wlmOn := strings.Contains(string(out), "WLM is running")
 	byPID := map[int32]string{}
 	if wlmOn {
-		out, err := invoke.CommandWithContext(ctx, "ps", "-e", "-o", "pid=,tdiskio=")
+		out, err := invoke.CommandWithContext(ctx, "ps", "-ek", "-o", "pid=,tdiskio=") // -k adds kernel processes, which -e leaves out
 		if err != nil {
 			return err
 		}
