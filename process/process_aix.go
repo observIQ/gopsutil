@@ -34,14 +34,14 @@ var aixBitnessCache sync.Map // map[int32]int64
 // AIX reports per-process disk I/O (ps tdiskio) only while Workload Manager runs; otherwise every process shows "-".
 var errAIXWLMNotRunning = errors.New("per-process disk I/O needs AIX Workload Manager running (start it with wlmcntrl -p)")
 
-// aixDiskIOMaxAge is how long one ps snapshot of every process's disk I/O is reused,
+// aixPSMaxAge is how long one ps snapshot of every process is reused,
 // so a scrape costs one ps instead of one per process. The counters only grow, so a reading this old is fine.
-const aixDiskIOMaxAge = time.Second
+const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
 
-// aixDiskIO is the shared snapshot. byPID holds tdiskio as ps printed it, "-" included.
-var aixDiskIO struct {
+// aixPS is the shared ps snapshot. byPID holds tdiskio as ps printed it, "-" included.
+var aixPS struct {
 	sync.Mutex
 	taken  time.Time
 	wlmOn  bool
@@ -49,14 +49,14 @@ var aixDiskIO struct {
 	loaded bool
 }
 
-func resetAIXDiskIO() {
-	aixDiskIO.Lock()
-	defer aixDiskIO.Unlock()
-	aixDiskIO.taken, aixDiskIO.wlmOn, aixDiskIO.byPID, aixDiskIO.loaded = time.Time{}, false, nil, false
+func resetAIXPS() {
+	aixPS.Lock()
+	defer aixPS.Unlock()
+	aixPS.taken, aixPS.wlmOn, aixPS.byPID, aixPS.loaded = time.Time{}, false, nil, false
 }
 
-// refreshAIXDiskIO retakes the snapshot. Callers hold aixDiskIO's lock.
-func refreshAIXDiskIO(ctx context.Context) error {
+// refreshAIXPS retakes the snapshot. Callers hold aixPS's lock.
+func refreshAIXPS(ctx context.Context) error {
 	// wlmcntrl -q exits non-zero when WLM is stopped (1) or passive (2), so read its message rather than its status
 	out, _ := invoke.CommandWithContext(ctx, "wlmcntrl", "-q")
 	wlmOn := strings.Contains(string(out), "WLM is running")
@@ -82,34 +82,34 @@ func refreshAIXDiskIO(ctx context.Context) error {
 			}
 		}
 	}
-	aixDiskIO.taken, aixDiskIO.wlmOn, aixDiskIO.byPID, aixDiskIO.loaded = aixNow(), wlmOn, byPID, true
+	aixPS.taken, aixPS.wlmOn, aixPS.byPID, aixPS.loaded = aixNow(), wlmOn, byPID, true
 	return nil
 }
 
-// aixDiskIOFor returns pid's tdiskio from a snapshot at most aixDiskIOMaxAge old.
+// aixDiskIOFor returns pid's tdiskio from a snapshot at most aixPSMaxAge old.
 // A PID missing from an older snapshot (a process started since) retakes it once.
 func aixDiskIOFor(ctx context.Context, pid int32) (string, error) {
-	aixDiskIO.Lock()
-	defer aixDiskIO.Unlock()
+	aixPS.Lock()
+	defer aixPS.Unlock()
 	fresh := false
-	if !aixDiskIO.loaded || aixNow().Sub(aixDiskIO.taken) >= aixDiskIOMaxAge {
-		if err := refreshAIXDiskIO(ctx); err != nil {
+	if !aixPS.loaded || aixNow().Sub(aixPS.taken) >= aixPSMaxAge {
+		if err := refreshAIXPS(ctx); err != nil {
 			return "", err
 		}
 		fresh = true
 	}
-	if !aixDiskIO.wlmOn {
+	if !aixPS.wlmOn {
 		return "", errAIXWLMNotRunning
 	}
-	v, ok := aixDiskIO.byPID[pid]
+	v, ok := aixPS.byPID[pid]
 	if !ok && !fresh {
-		if err := refreshAIXDiskIO(ctx); err != nil {
+		if err := refreshAIXPS(ctx); err != nil {
 			return "", err
 		}
-		if !aixDiskIO.wlmOn {
+		if !aixPS.wlmOn {
 			return "", errAIXWLMNotRunning
 		}
-		v, ok = aixDiskIO.byPID[pid]
+		v, ok = aixPS.byPID[pid]
 	}
 	if !ok {
 		return "", ErrorProcessNotRunning
