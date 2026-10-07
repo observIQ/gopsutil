@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,10 +31,6 @@ var pageSize = uint64(os.Getpagesize())
 // AIX-specific: cache for process bitness (4 = 32-bit, 8 = 64-bit)
 var aixBitnessCache sync.Map // map[int32]int64
 
-// aixIOStatChecked caches whether sys0 iostat=true has been verified.
-// 0 = unchecked, 1 = enabled, 2 = disabled
-var aixIOStatChecked int32
-
 // AIX reports per-process disk I/O (ps tdiskio) only while Workload Manager runs; otherwise every process shows "-".
 var errAIXWLMNotRunning = errors.New("per-process disk I/O needs AIX Workload Manager running (start it with wlmcntrl -p)")
 
@@ -45,7 +40,78 @@ const aixDiskIOMaxAge = time.Second
 
 var aixNow = time.Now
 
-func resetAIXDiskIO() {}
+// aixDiskIO is the shared snapshot. byPID holds tdiskio as ps printed it, "-" included.
+var aixDiskIO struct {
+	sync.Mutex
+	taken  time.Time
+	wlmOn  bool
+	byPID  map[int32]string
+	loaded bool
+}
+
+func resetAIXDiskIO() {
+	aixDiskIO.Lock()
+	defer aixDiskIO.Unlock()
+	aixDiskIO.taken, aixDiskIO.wlmOn, aixDiskIO.byPID, aixDiskIO.loaded = time.Time{}, false, nil, false
+}
+
+// refreshAIXDiskIO retakes the snapshot. Callers hold aixDiskIO's lock.
+func refreshAIXDiskIO(ctx context.Context) error {
+	// wlmcntrl -q exits non-zero when WLM is stopped (1) or passive (2), so read its message rather than its status
+	out, _ := invoke.CommandWithContext(ctx, "wlmcntrl", "-q")
+	wlmOn := strings.Contains(string(out), "WLM is running")
+	byPID := map[int32]string{}
+	if wlmOn {
+		out, err := invoke.CommandWithContext(ctx, "ps", "-e", "-o", "pid=,tdiskio=")
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			pid, err := strconv.ParseInt(fields[0], 10, 32)
+			if err != nil {
+				continue
+			}
+			byPID[int32(pid)] = fields[1]
+		}
+	}
+	aixDiskIO.taken, aixDiskIO.wlmOn, aixDiskIO.byPID, aixDiskIO.loaded = aixNow(), wlmOn, byPID, true
+	return nil
+}
+
+// aixDiskIOFor returns pid's tdiskio from a snapshot at most aixDiskIOMaxAge old.
+// A PID missing from an older snapshot (a process started since) retakes it once.
+func aixDiskIOFor(ctx context.Context, pid int32) (string, error) {
+	aixDiskIO.Lock()
+	defer aixDiskIO.Unlock()
+	fresh := false
+	if !aixDiskIO.loaded || aixNow().Sub(aixDiskIO.taken) >= aixDiskIOMaxAge {
+		if err := refreshAIXDiskIO(ctx); err != nil {
+			return "", err
+		}
+		fresh = true
+	}
+	if !aixDiskIO.wlmOn {
+		return "", errAIXWLMNotRunning
+	}
+	v, ok := aixDiskIO.byPID[pid]
+	if !ok && !fresh {
+		if err := refreshAIXDiskIO(ctx); err != nil {
+			return "", err
+		}
+		if !aixDiskIO.wlmOn {
+			return "", errAIXWLMNotRunning
+		}
+		v, ok = aixDiskIO.byPID[pid]
+	}
+	if !ok {
+		return "", ErrorProcessNotRunning
+	}
+	return v, nil
+}
 
 const prioProcess = 0 // linux/resource.h
 
@@ -433,46 +499,12 @@ func (p *Process) RlimitUsageWithContext(ctx context.Context, _ bool) ([]RlimitS
 }
 
 func (p *Process) IOCountersWithContext(ctx context.Context) (*IOCountersStat, error) {
-	// Check if sys0 iostat=true (cached after first check)
-	if cached := atomic.LoadInt32(&aixIOStatChecked); cached == 0 {
-		cmd := exec.CommandContext(ctx, "lsattr", "-El", "sys0", "-a", "iostat")
-		output, err := cmd.Output()
-		if err != nil {
-			atomic.StoreInt32(&aixIOStatChecked, 2)
-		} else {
-			fields := strings.Fields(strings.TrimSpace(string(output)))
-			if len(fields) >= 2 && fields[1] == "true" {
-				atomic.StoreInt32(&aixIOStatChecked, 1)
-			} else {
-				atomic.StoreInt32(&aixIOStatChecked, 2)
-			}
-		}
-	}
-	if atomic.LoadInt32(&aixIOStatChecked) != 1 {
-		return nil, common.ErrNotImplementedError
-	}
-
-	// Query I/O counters via ps command
-	//nolint:gosec // Process ID from internal tracking, not untrusted input
-	cmd := exec.CommandContext(ctx, "ps", "-efo", "pid,tdiskio", "-p", strconv.Itoa(int(p.Pid)))
-	output, err := cmd.Output()
+	ioCountStr, err := aixDiskIOFor(ctx, p.Pid)
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 2 {
-		return nil, errors.New("insufficient ps output")
-	}
-
-	// Parse the output (skip header)
-	fields := strings.Fields(lines[1])
-	if len(fields) < 2 {
-		return nil, errors.New("insufficient fields in ps output")
-	}
-
 	// Check for hyphen (unavailable data)
-	ioCountStr := fields[1]
 	if ioCountStr == "-" {
 		return nil, errors.New("I/O counters not available for this process")
 	}
