@@ -15,18 +15,20 @@ import (
 
 //go:cgo_import_dynamic libperfstat_cpu perfstat_cpu "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_cpu_total perfstat_cpu_total "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libperfstat_disk perfstat_disk "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getthrds64 getthrds64 "libc.a/shr_64.o"
 
 //go:linkname libperfstat_cpu libperfstat_cpu
 //go:linkname libperfstat_cpu_total libperfstat_cpu_total
+//go:linkname libperfstat_disk libperfstat_disk
 //go:linkname libc_getprocs64 libc_getprocs64
 //go:linkname libc_getthrds64 libc_getthrds64
 
 type libFunc uintptr
 
 //nolint:revive // names must match the linkname symbols
-var libperfstat_cpu, libperfstat_cpu_total, libc_getprocs64, libc_getthrds64 libFunc
+var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -92,18 +94,25 @@ func PerfstatCPUTotalStat() (*PerfstatCPUTotal, error) {
 
 // PerfstatCPUStats reads perfstat_cpu for every logical CPU.
 func PerfstatCPUStats() ([]PerfstatCPU, error) {
-	size := unsafe.Sizeof(PerfstatCPU{})
-	n, err := callLib(&libperfstat_cpu, 4, 0, 0, size, 0, 0, 0)
+	return perfstatEnumerate[PerfstatCPU](&libperfstat_cpu)
+}
+
+// perfstatEnumerate reads every entry of a perfstat function that lists items (CPUs,
+// disks, interfaces): a first call counts them, a second fills a buffer from the first.
+func perfstatEnumerate[T any](fn *libFunc) ([]T, error) {
+	var zero T
+	size := unsafe.Sizeof(zero)
+	n, err := callLib(fn, 4, 0, 0, size, 0, 0, 0)
 	if err != nil || n == 0 {
 		return nil, err
 	}
-	cpus := make([]PerfstatCPU, n)
-	first := new([64]byte) // an empty name starts at the first CPU
-	n, err = callLib(&libperfstat_cpu, 4, uintptr(unsafe.Pointer(first)), uintptr(unsafe.Pointer(&cpus[0])), size, uintptr(n), 0, 0)
+	buf := make([]T, n)
+	first := new([64]byte) // an empty name starts at the first entry
+	n, err = callLib(fn, 4, uintptr(unsafe.Pointer(first)), uintptr(unsafe.Pointer(&buf[0])), size, uintptr(n), 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	return cpus[:n], nil
+	return buf[:n], nil
 }
 
 // PerfstatDisk is the part of perfstat_disk_t from libperfstat.h that gopsutil reads.
@@ -129,7 +138,7 @@ type PerfstatDisk struct {
 
 // PerfstatDiskStats reads perfstat_disk for every disk.
 func PerfstatDiskStats() ([]PerfstatDisk, error) {
-	return nil, ErrNotImplementedError
+	return perfstatEnumerate[PerfstatDisk](&libperfstat_disk)
 }
 
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through

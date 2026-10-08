@@ -6,7 +6,6 @@ package disk
 import (
 	"context"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/internal/common"
@@ -19,45 +18,33 @@ var ignoreFSType = map[string]bool{"procfs": true}
 // perfstatDiskStats reads perfstat_disk, swapped out in tests.
 var perfstatDiskStats = common.PerfstatDiskStats
 
-func IOCountersWithContext(ctx context.Context, names ...string) (map[string]IOCountersStat, error) {
-	out, err := invoke.CommandWithContext(ctx, "iostat", "-d")
+func IOCountersWithContext(_ context.Context, names ...string) (map[string]IOCountersStat, error) {
+	disks, err := perfstatDiskStats()
 	if err != nil {
 		return nil, err
 	}
-
-	ret := make(map[string]IOCountersStat)
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 6 {
-			continue
-		}
-		// Skip the header line
-		if fields[0] == "Disks:" {
-			continue
-		}
-
-		name := fields[0]
+	ret := make(map[string]IOCountersStat, len(disks))
+	for i := range disks {
+		d := &disks[i]
+		name := common.CString(d.Name[:])
 		if len(names) > 0 && !common.StringsHas(names, name) {
 			continue
 		}
-
-		kbRead, err := strconv.ParseUint(fields[4], 10, 64)
-		if err != nil {
-			continue
-		}
-		kbWritten, err := strconv.ParseUint(fields[5], 10, 64)
-		if err != nil {
-			continue
-		}
-
+		// The same conversions as the cgo build: service and queue times are in
+		// nanoseconds, busy time in kernel ticks.
 		ret[name] = IOCountersStat{
-			Name:       name,
-			ReadBytes:  kbRead * 1024,
-			WriteBytes: kbWritten * 1024,
+			Name:           name,
+			ReadCount:      d.XRate,
+			WriteCount:     d.Xfers - d.XRate,
+			ReadBytes:      d.RBlks * d.BSize,
+			WriteBytes:     d.WBlks * d.BSize,
+			ReadTime:       d.RServ / 1_000_000,
+			WriteTime:      d.WServ / 1_000_000,
+			IoTime:         d.Time * 1000 / common.AIXClockTicks,
+			WeightedIO:     d.WQTime / 1_000_000,
+			IopsInProgress: d.QDepth,
 		}
 	}
-
 	return ret, nil
 }
 
