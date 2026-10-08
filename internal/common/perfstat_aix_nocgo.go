@@ -101,6 +101,61 @@ func PerfstatCPUStats() ([]PerfstatCPU, error) {
 	return cpus[:n], nil
 }
 
+// AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
+// getprocs64. Offsets and the 5024-byte size were checked with gcc on AIX 7.2 and 7.3.
+type AIXProcess struct {
+	Pid     int32
+	_       [52 - 4]byte
+	State   uint32
+	Flags   uint32
+	_       [144 - 60]byte
+	MajFlt  int64
+	_       [1504 - 152]byte
+	IOChars int64
+	_       [5024 - 1512]byte
+}
+
+// AIXThread is the part of thrdentry64 from procinfo.h that gopsutil reads through
+// getthrds64. Offsets and the 424-byte size were checked with gcc on AIX 7.2 and 7.3.
+type AIXThread struct {
+	Tid      uint64
+	Pid      int32
+	_        [20 - 12]byte
+	State    uint32
+	Flags    uint32
+	_        [32 - 28]byte
+	WaitType uint32
+	_        [424 - 36]byte
+}
+
+// Process and thread flags and states from sys/proc.h and sys/thread.h.
+const (
+	AIXProcKernel     = 0x200  // SKPROC
+	AIXThreadKernel   = 0x1000 // TKTHREAD
+	AIXThreadRunnable = 2      // TSRUN
+	AIXThreadSleeping = 3      // TSSLEEP
+)
+
+// AIXVMMWait reports whether a sleeping thread waits in the VMM wait queue (TWPGIN,
+// TWPGOUT, TWFREEF or TWMEM), which is what vmstat reports as blocked.
+func AIXVMMWait(waitType uint32) bool {
+	switch waitType {
+	case 5, 6, 8, 9:
+		return true
+	}
+	return false
+}
+
+// AIXProcesses reads every process through getprocs64.
+func AIXProcesses() ([]AIXProcess, error) {
+	return nil, ErrNotImplementedError
+}
+
+// AIXThreads reads every thread on the system through getthrds64.
+func AIXThreads() ([]AIXThread, error) {
+	return nil, ErrNotImplementedError
+}
+
 // CString returns the NUL-terminated string at the start of b.
 func CString(b []byte) string {
 	for i, c := range b {
