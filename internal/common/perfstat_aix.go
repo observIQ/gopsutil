@@ -230,6 +230,20 @@ func PerfstatPagingSpaceStats() ([]PerfstatPagingSpace, error) {
 	return perfstatEnumerate[PerfstatPagingSpace](&libperfstat_pagingspace)
 }
 
+// PerfstatPartitionTotal is the part of perfstat_partition_total_t from libperfstat.h
+// that gopsutil reads. Offsets and the 688-byte size were checked with gcc on AIX 7.2 and 7.3.
+type PerfstatPartitionTotal struct {
+	Name   [64]byte // "NULL" outside a logical partition, as uname -L prints
+	_      [68 - 64]byte
+	LparID int32
+	_      [688 - 72]byte
+}
+
+// PerfstatPartitionTotalStat reads perfstat_partition_total.
+func PerfstatPartitionTotalStat() (*PerfstatPartitionTotal, error) {
+	return nil, ErrNotImplementedError
+}
+
 // AIXMount is one entry of the mount table from mntctl(MCTL_QUERY).
 type AIXMount struct {
 	Object  string // the mounted device or remote path

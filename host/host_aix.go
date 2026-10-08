@@ -178,6 +178,9 @@ func KernelArch() (arch string, err error) {
 	return kernelArchVal, kernelArchErr
 }
 
+// perfstatPartitionTotalStat reads perfstat_partition_total, swapped out in tests.
+var perfstatPartitionTotalStat = common.PerfstatPartitionTotalStat
+
 func VirtualizationWithContext(ctx context.Context) (string, string, error) {
 	// Check for WPAR (Workload Partition) first — most specific virtualization layer.
 	// uname -W returns "0" if not in a WPAR, or the WPAR ID if inside one.
