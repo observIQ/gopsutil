@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,4 +87,27 @@ func TestTimesWithContextAndInterval_Aggregate(t *testing.T) {
 	assert.InDelta(t, 3.0, stats[0].System, 0.01)
 	assert.InDelta(t, 0.0, stats[0].Iowait, 0.01)
 	assert.InDelta(t, 96.0, stats[0].Idle, 0.01)
+}
+
+func TestInfoWithContext_FromPrtconf(t *testing.T) {
+	origInvoke := invoke
+	invoke = testInvoker{}
+	prtconfOnce = sync.Once{}
+	defer func() {
+		invoke = origInvoke
+		prtconfOnce = sync.Once{}
+	}()
+
+	info, err := InfoWithContext(context.Background())
+	require.NoError(t, err)
+	require.Len(t, info, 1)
+
+	// Fixture prtconf: "Processor Type: PowerPC_POWER8", matching the cgo
+	// build's perfstat description.
+	assert.Equal(t, "PowerPC_POWER8", info[0].ModelName)
+	assert.Equal(t, "PowerPC", info[0].Family)
+	assert.Equal(t, "POWER8", info[0].Model)
+	assert.Equal(t, "IBM pSeries (emulated by qemu)", info[0].VendorID)
+	assert.Equal(t, int32(4), info[0].Cores)
+	assert.InDelta(t, 1000.0, info[0].Mhz, 0.01)
 }
