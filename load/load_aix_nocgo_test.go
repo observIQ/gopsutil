@@ -5,7 +5,6 @@ package load
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,30 +13,9 @@ import (
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
-// mockInvoker returns canned output for specific commands.
-type mockInvoker struct {
-	common.Invoke
-	output map[string][]byte
-}
-
-func (m mockInvoker) CommandWithContext(_ context.Context, name string, arg ...string) ([]byte, error) {
-	var b strings.Builder
-	b.WriteString(name)
-	for _, a := range arg {
-		b.WriteString(" ")
-		b.WriteString(a)
-	}
-	key := b.String()
-	if out, ok := m.output[key]; ok {
-		return out, nil
-	}
-	return nil, common.ErrNotImplementedError
-}
-
 func TestMiscWithContext_FromThreadStates(t *testing.T) {
 	origProcs, origThreads := aixProcesses, aixThreads
-	t.Cleanup(func() { aixProcesses, aixThreads, testInvoker = origProcs, origThreads, nil })
-	testInvoker = mockInvoker{} // no vmstat output; Misc leaves those counters at zero
+	t.Cleanup(func() { aixProcesses, aixThreads = origProcs, origThreads })
 	aixProcesses = func() ([]common.AIXProcess, error) {
 		return []common.AIXProcess{
 			{Pid: 1},
@@ -76,4 +54,20 @@ func TestAvgWithContext_FromPerfstat(t *testing.T) {
 	avg, err := AvgWithContext(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, &AvgStat{Load1: 1, Load5: 0.5, Load15: 1.5}, avg)
+}
+
+func TestMiscWithContext_CountersFromPerfstat(t *testing.T) {
+	origProcs, origThreads, origTotal := aixProcesses, aixThreads, perfstatCPUTotalStat
+	t.Cleanup(func() { aixProcesses, aixThreads, perfstatCPUTotalStat = origProcs, origThreads, origTotal })
+	aixProcesses = func() ([]common.AIXProcess, error) { return nil, nil }
+	aixThreads = func() ([]common.AIXThread, error) { return nil, nil }
+	perfstatCPUTotalStat = func() (*common.PerfstatCPUTotal, error) {
+		return &common.PerfstatCPUTotal{PSwitch: 134399557, Syscall: 111916845, DevIntrs: 5057134}, nil
+	}
+
+	misc, err := MiscWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 134399557, misc.Ctxt)
+	assert.Equal(t, 111916845, misc.SysCalls)
+	assert.Equal(t, 5057134, misc.Interrupts)
 }

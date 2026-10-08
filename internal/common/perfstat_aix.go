@@ -84,7 +84,11 @@ type PerfstatCPUTotal struct {
 	Sys         uint64
 	Idle        uint64
 	Wait        uint64
-	_           [192 - 112]byte
+	PSwitch     uint64 // context switches
+	Syscall     uint64
+	_           [176 - 128]byte
+	DevIntrs    uint64 // device interrupts
+	_           [192 - 184]byte
 	Lbolt       int64
 	LoadAvg     [3]uint64
 	_           [696 - 224]byte
