@@ -16,19 +16,21 @@ import (
 //go:cgo_import_dynamic libperfstat_cpu perfstat_cpu "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_cpu_total perfstat_cpu_total "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_disk perfstat_disk "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libperfstat_netinterface perfstat_netinterface "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getthrds64 getthrds64 "libc.a/shr_64.o"
 
 //go:linkname libperfstat_cpu libperfstat_cpu
 //go:linkname libperfstat_cpu_total libperfstat_cpu_total
 //go:linkname libperfstat_disk libperfstat_disk
+//go:linkname libperfstat_netinterface libperfstat_netinterface
 //go:linkname libc_getprocs64 libc_getprocs64
 //go:linkname libc_getthrds64 libc_getthrds64
 
 type libFunc uintptr
 
 //nolint:revive // names must match the linkname symbols
-var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libc_getprocs64, libc_getthrds64 libFunc
+var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libperfstat_netinterface, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -161,7 +163,7 @@ type PerfstatNetInterface struct {
 
 // PerfstatNetInterfaceStats reads perfstat_netinterface for every interface.
 func PerfstatNetInterfaceStats() ([]PerfstatNetInterface, error) {
-	return nil, ErrNotImplementedError
+	return perfstatEnumerate[PerfstatNetInterface](&libperfstat_netinterface)
 }
 
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
