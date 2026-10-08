@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
 func TestSplitProcStat(t *testing.T) {
@@ -181,7 +182,7 @@ func Benchmark_fillFromStatusWithContext(b *testing.B) {
 }
 
 func TestFillFromTIDStatWithContext_AIX(t *testing.T) {
-	// fillFromTIDStat shells out to ps for page-fault data, so it needs a
+	// fillFromTIDStat reads page faults from getprocs64, so it needs a
 	// live process. Use this test binary itself and the real /proc rather
 	// than the fixture tree.
 	p := &Process{Pid: int32(os.Getpid())}
@@ -416,104 +417,53 @@ func TestIOCountersWithContext(t *testing.T) {
 	}
 }
 
-// diskIOInvoker answers wlmcntrl -q and ps with canned output and records each command it runs.
-type diskIOInvoker struct {
-	wlm    string
-	ps     []string // successive ps outputs as "pid pagein tdiskio" lines; the last one repeats
-	kernel string   // extra ps lines for kernel processes, which AIX ps lists only with -k
-	calls  []string
+// procTableFake stands in for getprocs64 and counts how often the table is read.
+type procTableFake struct {
+	tables [][]common.AIXProcess // successive reads; the last one repeats
+	calls  int
 }
 
-// psColumns renders full "pid pagein tdiskio" lines as just the columns a ps -o list asks for.
-// A line missing trailing columns (a zombie prints only its PID) keeps only what it has.
-func psColumns(full, oList string) string {
-	idx := map[string]int{"pid": 0, "pagein": 1, "tdiskio": 2}
-	var cols []int
-	for _, c := range strings.Split(oList, ",") {
-		cols = append(cols, idx[strings.TrimSuffix(c, "=")])
-	}
-	var b strings.Builder
-	for _, line := range strings.Split(full, "\n") {
-		f := strings.Fields(line)
-		if len(f) == 0 {
-			continue
-		}
-		var out []string
-		for _, c := range cols {
-			if c < len(f) {
-				out = append(out, f[c])
-			}
-		}
-		b.WriteString(strings.Join(out, " ") + "\n")
-	}
-	return b.String()
+func (f *procTableFake) read() ([]common.AIXProcess, error) {
+	f.calls++
+	return f.tables[min(f.calls, len(f.tables))-1], nil
 }
 
-func (f *diskIOInvoker) Command(name string, arg ...string) ([]byte, error) {
-	return f.CommandWithContext(context.Background(), name, arg...)
+// noExecInvoker fails the test if the code under test runs any command.
+type noExecInvoker struct{ t *testing.T }
+
+func (n noExecInvoker) Command(name string, arg ...string) ([]byte, error) {
+	return n.CommandWithContext(context.Background(), name, arg...)
 }
 
-func (f *diskIOInvoker) CommandWithContext(_ context.Context, name string, arg ...string) ([]byte, error) {
-	f.calls = append(f.calls, name)
-	switch name {
-	case "wlmcntrl":
-		if strings.Contains(f.wlm, "stopped") {
-			return []byte(f.wlm), errors.New("exit status 1")
-		}
-		return []byte(f.wlm), errors.New("exit status 2")
-	case "ps":
-		n := 0
-		for _, c := range f.calls {
-			if c == "ps" {
-				n++
-			}
-		}
-		out := f.ps[min(n, len(f.ps))-1]
-		if slices.ContainsFunc(arg, func(a string) bool { return strings.HasPrefix(a, "-") && strings.Contains(a, "k") }) {
-			out += f.kernel
-		}
-		if i := slices.Index(arg, "-o"); i >= 0 && i+1 < len(arg) {
-			out = psColumns(out, arg[i+1])
-		}
-		return []byte(out), nil
-	}
-	return nil, fmt.Errorf("unexpected command %s", name)
+func (n noExecInvoker) CommandWithContext(_ context.Context, name string, arg ...string) ([]byte, error) {
+	n.t.Errorf("unexpected command: %s %s", name, strings.Join(arg, " "))
+	return nil, errors.New("no commands in this test")
 }
 
-func (f *diskIOInvoker) count(name string) int {
-	n := 0
-	for _, c := range f.calls {
-		if c == name {
-			n++
-		}
-	}
-	return n
-}
-
-// useDiskIOFake swaps in a fake invoker and clock, and clears the shared snapshot.
-func useDiskIOFake(t *testing.T, f *diskIOInvoker) *time.Time {
+// useProcTableFake swaps in a fake process table and clock, forbids commands, and clears the shared snapshot.
+func useProcTableFake(t *testing.T, f *procTableFake) *time.Time {
 	t.Helper()
-	origInvoke, origNow := invoke, aixNow
+	origProcs, origNow, origInvoke := aixProcesses, aixNow, invoke
 	now := time.Unix(1000, 0)
-	invoke, aixNow = f, func() time.Time { return now }
+	aixProcesses, aixNow, invoke = f.read, func() time.Time { return now }, noExecInvoker{t}
 	resetAIXPS()
-	t.Cleanup(func() { invoke, aixNow = origInvoke, origNow; resetAIXPS() })
+	t.Cleanup(func() { aixProcesses, aixNow, invoke = origProcs, origNow, origInvoke; resetAIXPS() })
 	return &now
 }
 
-const wlmRunningMode = "WLM is running in passive mode\n"
+func TestIOCountersWithContext_WithoutWLM(t *testing.T) {
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: 1, IOChars: 4096}}}}
+	useProcTableFake(t, f)
 
-func TestIOCountersWithContext_WLMStopped(t *testing.T) {
-	f := &diskIOInvoker{wlm: "WLM is stopped\n", ps: []string{"1 0 -\n"}}
-	useDiskIOFake(t, f)
-
-	_, err := (&Process{Pid: 1}).IOCountersWithContext(context.Background())
-	require.ErrorIs(t, err, errAIXWLMNotRunning)
+	io, err := (&Process{Pid: 1}).IOCountersWithContext(context.Background())
+	require.NoError(t, err)
+	// pi_ioch counts read and write bytes together, as tdiskio did.
+	assert.Equal(t, uint64(4096), io.ReadBytes)
 }
 
 func TestIOCountersWithContext_OneSnapshotForAllProcesses(t *testing.T) {
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 10\n42 0 555\n"}}
-	useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: 1, IOChars: 10}, {Pid: 42, IOChars: 555}}}}
+	useProcTableFake(t, f)
 	ctx := context.Background()
 
 	io1, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
@@ -523,13 +473,12 @@ func TestIOCountersWithContext_OneSnapshotForAllProcesses(t *testing.T) {
 
 	assert.Equal(t, uint64(10), io1.ReadBytes)
 	assert.Equal(t, uint64(555), io42.ReadBytes)
-	assert.Equal(t, 1, f.count("ps"))
-	assert.Equal(t, 1, f.count("wlmcntrl"))
+	assert.Equal(t, 1, f.calls)
 }
 
 func TestIOCountersWithContext_StaleSnapshotRefreshes(t *testing.T) {
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 10\n", "1 0 20\n"}}
-	now := useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: 1, IOChars: 10}}, {{Pid: 1, IOChars: 20}}}}
+	now := useProcTableFake(t, f)
 	ctx := context.Background()
 
 	io, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
@@ -540,12 +489,12 @@ func TestIOCountersWithContext_StaleSnapshotRefreshes(t *testing.T) {
 	io, err = (&Process{Pid: 1}).IOCountersWithContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(20), io.ReadBytes)
-	assert.Equal(t, 2, f.count("ps"))
+	assert.Equal(t, 2, f.calls)
 }
 
 func TestIOCountersWithContext_NewProcessRefreshesOnce(t *testing.T) {
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 10\n", "1 0 10\n7 0 3\n"}}
-	useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: 1, IOChars: 10}}, {{Pid: 1, IOChars: 10}, {Pid: 7, IOChars: 3}}}}
+	useProcTableFake(t, f)
 	ctx := context.Background()
 
 	_, err := (&Process{Pid: 1}).IOCountersWithContext(ctx)
@@ -556,40 +505,20 @@ func TestIOCountersWithContext_NewProcessRefreshesOnce(t *testing.T) {
 
 	_, err = (&Process{Pid: 99}).IOCountersWithContext(ctx)
 	require.ErrorIs(t, err, ErrorProcessNotRunning)
-	assert.Equal(t, 3, f.count("ps"), "a PID missing from a fresh snapshot should not trigger another ps")
+	assert.Equal(t, 3, f.calls, "a PID missing from a fresh snapshot should not trigger another read")
 }
 
 func TestIOCountersWithContext_KernelProcessInSnapshot(t *testing.T) {
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 10\n"}, kernel: "260 0 0\n"}
-	useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: 1, IOChars: 10}, {Pid: 260, Flags: common.AIXProcKernel}}}}
+	useProcTableFake(t, f)
 
 	io, err := (&Process{Pid: 260}).IOCountersWithContext(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, uint64(0), io.ReadBytes)
-	assert.Equal(t, 1, f.count("ps"), "kernel processes should come from the same snapshot")
+	assert.Equal(t, 1, f.calls, "kernel processes should come from the same snapshot")
 }
 
-func TestIOCountersWithContext_ZombieReadsZero(t *testing.T) {
-	// ps prints a zombie with an empty tdiskio column, so its line has only the PID
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 10\n1638710\n"}}
-	useDiskIOFake(t, f)
-
-	io, err := (&Process{Pid: 1638710}).IOCountersWithContext(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, IOCountersStat{}, *io)
-	assert.Equal(t, 1, f.count("ps"), "a zombie is in the snapshot, so it should not trigger another ps")
-}
-
-func TestIOCountersWithContext_NoDataForProcess(t *testing.T) {
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{"1 0 -\n"}}
-	useDiskIOFake(t, f)
-
-	_, err := (&Process{Pid: 1}).IOCountersWithContext(context.Background())
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, errAIXWLMNotRunning)
-}
-
-// Fixture PIDs under testdata/aix, whose psinfo the page-fault path reads before it reaches ps
+// Fixture PIDs under testdata/aix, whose psinfo the page-fault path reads before it reaches the snapshot
 const (
 	fixturePID      = 12845476
 	otherFixturePID = 5767616
@@ -597,9 +526,8 @@ const (
 
 func TestPageFaultsWithContext_FromSnapshot(t *testing.T) {
 	t.Setenv("HOST_PROC", "testdata/aix")
-	// pagein needs no WLM, so a stopped WLM must not block page faults
-	f := &diskIOInvoker{wlm: "WLM is stopped\n", ps: []string{fmt.Sprintf("%d 38 -\n%d 7 -\n", fixturePID, otherFixturePID)}}
-	useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: fixturePID, MajFlt: 38}, {Pid: otherFixturePID, MajFlt: 7}}}}
+	useProcTableFake(t, f)
 	ctx := context.Background()
 
 	pf, err := (&Process{Pid: fixturePID}).PageFaultsWithContext(ctx)
@@ -608,13 +536,13 @@ func TestPageFaultsWithContext_FromSnapshot(t *testing.T) {
 	pf, err = (&Process{Pid: otherFixturePID}).PageFaultsWithContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), pf.MajorFaults)
-	assert.Equal(t, 1, f.count("ps"), "page faults for every process should come from one ps")
+	assert.Equal(t, 1, f.calls, "page faults for every process should come from one read")
 }
 
 func TestTimesWithContext_SharesSnapshot(t *testing.T) {
 	t.Setenv("HOST_PROC", "testdata/aix")
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{fmt.Sprintf("%d 38 5\n%d 7 9\n", fixturePID, otherFixturePID)}}
-	useDiskIOFake(t, f)
+	f := &procTableFake{tables: [][]common.AIXProcess{{{Pid: fixturePID, MajFlt: 38, IOChars: 5}, {Pid: otherFixturePID, MajFlt: 7, IOChars: 9}}}}
+	useProcTableFake(t, f)
 	ctx := context.Background()
 
 	for _, pid := range []int32{fixturePID, otherFixturePID} {
@@ -626,18 +554,7 @@ func TestTimesWithContext_SharesSnapshot(t *testing.T) {
 		_, err = p.IOCountersWithContext(ctx)
 		require.NoError(t, err)
 	}
-	assert.Equal(t, 1, f.count("ps"), "times, ppid, and disk I/O for every process should share one ps")
-}
-
-func TestPageFaultsWithContext_ZombieReadsZero(t *testing.T) {
-	t.Setenv("HOST_PROC", "testdata/aix")
-	// ps prints a zombie with empty pagein and tdiskio columns, so its line has only the PID
-	f := &diskIOInvoker{wlm: wlmRunningMode, ps: []string{fmt.Sprintf("%d\n", fixturePID)}}
-	useDiskIOFake(t, f)
-
-	pf, err := (&Process{Pid: fixturePID}).PageFaultsWithContext(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, uint64(0), pf.MajorFaults)
+	assert.Equal(t, 1, f.calls, "times, ppid, and disk I/O for every process should share one read")
 }
 
 func TestCPUAffinityWithContext(t *testing.T) {
