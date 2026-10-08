@@ -141,6 +141,29 @@ func PerfstatDiskStats() ([]PerfstatDisk, error) {
 	return perfstatEnumerate[PerfstatDisk](&libperfstat_disk)
 }
 
+// PerfstatNetInterface is the part of perfstat_netinterface_t from libperfstat.h that
+// gopsutil reads. Offsets and the 240-byte size were checked with gcc on AIX 7.2 and 7.3.
+type PerfstatNetInterface struct {
+	Name      [64]byte
+	_         [144 - 64]byte
+	IPackets  uint64
+	IBytes    uint64
+	IErrors   uint64
+	OPackets  uint64
+	OBytes    uint64
+	OErrors   uint64
+	_         [208 - 192]byte
+	XmitDrops uint64
+	_         [224 - 216]byte
+	IfIqDrops uint64
+	_         [240 - 232]byte
+}
+
+// PerfstatNetInterfaceStats reads perfstat_netinterface for every interface.
+func PerfstatNetInterfaceStats() ([]PerfstatNetInterface, error) {
+	return nil, ErrNotImplementedError
+}
+
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
 // getprocs64. Offsets and the 5024-byte size were checked with gcc on AIX 7.2 and 7.3.
 type AIXProcess struct {
