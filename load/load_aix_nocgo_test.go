@@ -34,27 +34,35 @@ func (m mockInvoker) CommandWithContext(_ context.Context, name string, arg ...s
 	return nil, common.ErrNotImplementedError
 }
 
-func TestMiscWithContext_ProcessStates(t *testing.T) {
-	// Mock ps -e -o state output with known process states:
-	//   3 Active (A), 1 Idle (I) -> ProcsRunning = 4
-	//   2 Swapped (W) -> ProcsBlocked = 2
-	//   1 Zombie (Z), 1 Stopped (T) -> counted in total only
-	//   Total = 8
-	psOutput := "ST\nA\nA\nI\nW\nZ\nT\nA\nW\n"
-
-	testInvoker = mockInvoker{
-		output: map[string][]byte{
-			"ps -e -o state": []byte(psOutput),
-		},
+func TestMiscWithContext_FromThreadStates(t *testing.T) {
+	origProcs, origThreads := aixProcesses, aixThreads
+	t.Cleanup(func() { aixProcesses, aixThreads, testInvoker = origProcs, origThreads, nil })
+	testInvoker = mockInvoker{} // no vmstat output; Misc leaves those counters at zero
+	aixProcesses = func() ([]common.AIXProcess, error) {
+		return []common.AIXProcess{
+			{Pid: 1},
+			{Pid: 260, Flags: common.AIXProcKernel},
+			{Pid: 300},
+			{Pid: 400},
+			{Pid: 500}, // a zombie, with no threads left
+		}, nil
 	}
-	defer func() { testInvoker = nil }()
+	aixThreads = func() ([]common.AIXThread, error) {
+		return []common.AIXThread{
+			{Pid: 260, State: common.AIXThreadRunnable, Flags: common.AIXThreadKernel}, // kernel wait process
+			{Pid: 1, State: common.AIXThreadSleeping, WaitType: 1},                     // TWEVENT
+			{Pid: 300, State: common.AIXThreadRunnable},
+			{Pid: 300, State: common.AIXThreadRunnable},              // a second runnable thread, same process
+			{Pid: 400, State: common.AIXThreadSleeping, WaitType: 5}, // TWPGIN
+			{Pid: 400, State: common.AIXThreadSleeping, WaitType: 3}, // TWTIMER
+		}, nil
+	}
 
 	misc, err := MiscWithContext(context.Background())
 	require.NoError(t, err)
-
-	assert.Equal(t, 4, misc.ProcsRunning, "3 A + 1 I = 4 running")
-	assert.Equal(t, 2, misc.ProcsBlocked, "2 W = 2 blocked")
-	assert.Equal(t, 8, misc.ProcsTotal, "8 total processes")
+	assert.Equal(t, 1, misc.ProcsRunning, "process 300; the kernel wait process is left out")
+	assert.Equal(t, 1, misc.ProcsBlocked, "process 400, waiting on page-in")
+	assert.Equal(t, 4, misc.ProcsTotal, "every non-kernel process, the zombie included")
 }
 
 func TestAvgWithContext_FromPerfstat(t *testing.T) {

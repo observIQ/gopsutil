@@ -4,6 +4,8 @@
 package common
 
 import (
+	"os"
+	"slices"
 	"testing"
 	"unsafe"
 
@@ -26,6 +28,18 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(104), unsafe.Offsetof(PerfstatCPUTotal{}.Wait))
 	assert.Equal(t, uintptr(192), unsafe.Offsetof(PerfstatCPUTotal{}.Lbolt))
 	assert.Equal(t, uintptr(200), unsafe.Offsetof(PerfstatCPUTotal{}.LoadAvg))
+
+	assert.Equal(t, uintptr(5024), unsafe.Sizeof(AIXProcess{}))
+	assert.Equal(t, uintptr(52), unsafe.Offsetof(AIXProcess{}.State))
+	assert.Equal(t, uintptr(56), unsafe.Offsetof(AIXProcess{}.Flags))
+	assert.Equal(t, uintptr(144), unsafe.Offsetof(AIXProcess{}.MajFlt))
+	assert.Equal(t, uintptr(1504), unsafe.Offsetof(AIXProcess{}.IOChars))
+
+	assert.Equal(t, uintptr(424), unsafe.Sizeof(AIXThread{}))
+	assert.Equal(t, uintptr(8), unsafe.Offsetof(AIXThread{}.Pid))
+	assert.Equal(t, uintptr(20), unsafe.Offsetof(AIXThread{}.State))
+	assert.Equal(t, uintptr(24), unsafe.Offsetof(AIXThread{}.Flags))
+	assert.Equal(t, uintptr(32), unsafe.Offsetof(AIXThread{}.WaitType))
 }
 
 func TestPerfstatCPUStats_Live(t *testing.T) {
@@ -46,4 +60,18 @@ func TestPerfstatCPUStats_Live(t *testing.T) {
 	}
 	// Both reads are cumulative, so the per-CPU sum taken second can only be at or above the total.
 	assert.GreaterOrEqual(t, idle, total.Idle)
+}
+
+func TestAIXProcessesAndThreads_Live(t *testing.T) {
+	self := int32(os.Getpid())
+
+	procs, err := AIXProcesses()
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(procs, func(p AIXProcess) bool { return p.Pid == self }), "own process listed")
+	assert.True(t, slices.ContainsFunc(procs, func(p AIXProcess) bool { return p.Flags&AIXProcKernel != 0 }), "kernel processes listed")
+
+	threads, err := AIXThreads()
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(threads, func(th AIXThread) bool { return th.Pid == self && th.State == AIXThreadRunnable }),
+		"own thread listed as runnable")
 }
