@@ -12,8 +12,12 @@ import (
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
-// perfstatCPUTotalStat reads perfstat_cpu_total, swapped out in tests.
-var perfstatCPUTotalStat = common.PerfstatCPUTotalStat
+// perfstat and libc reads, swapped out in tests.
+var (
+	perfstatCPUTotalStat = common.PerfstatCPUTotalStat
+	aixProcesses         = common.AIXProcesses
+	aixThreads           = common.AIXThreads
+)
 
 // testInvoker is used for dependency injection in tests
 var testInvoker common.Invoker
