@@ -187,6 +187,8 @@ func InfoWithContext(ctx context.Context) ([]InfoStat, error) {
 		case strings.HasPrefix(line, "Processor Type:"):
 			p := strings.Split(string(line), ":")
 			if p != nil {
+				// Matches the cgo build, where perfstat's description is also e.g. "PowerPC_POWER10".
+				ret.ModelName = strings.TrimSpace(p[1])
 				c := strings.Split(string(p[1]), "_")
 				if c != nil {
 					ret.Family = strings.TrimSpace(c[0])
