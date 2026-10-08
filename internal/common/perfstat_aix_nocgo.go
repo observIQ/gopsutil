@@ -3,6 +3,45 @@
 
 package common
 
+// Without cgo, gopsutil calls libperfstat directly, the way golang.org/x/sys/unix calls
+// libc on AIX: cgo_import_dynamic binds the symbol, linkname exposes it, and the
+// runtime's syscall6 (reached through asm_aix_ppc64.s) makes the call.
+
+import (
+	"errors"
+	"syscall"
+	"unsafe"
+)
+
+//go:cgo_import_dynamic libperfstat_cpu perfstat_cpu "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libperfstat_cpu_total perfstat_cpu_total "libperfstat.a/shr_64.o"
+
+//go:linkname libperfstat_cpu libperfstat_cpu
+//go:linkname libperfstat_cpu_total libperfstat_cpu_total
+
+type libFunc uintptr
+
+var libperfstat_cpu, libperfstat_cpu_total libFunc //nolint:revive // names must match the linkname symbols
+
+// Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
+func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
+
+// callLib calls an imported C function and returns its int result, or the errno when it
+// returns a negative value. uintptrescapes keeps pointer arguments on the heap and alive
+// for the duration of the call.
+//
+//go:uintptrescapes
+func callLib(fn *libFunc, nargs int, a1, a2, a3, a4, a5, a6 uintptr) (int, error) {
+	r, _, e := syscall6(uintptr(unsafe.Pointer(fn)), uintptr(nargs), a1, a2, a3, a4, a5, a6)
+	if n := int(int32(r)); n >= 0 {
+		return n, nil
+	}
+	if e != 0 {
+		return 0, e
+	}
+	return 0, errors.New("libperfstat call failed")
+}
+
 // AIXClockTicks is the AIX kernel tick rate (HZ), which perfstat tick counters use.
 const AIXClockTicks = 100
 
@@ -39,12 +78,27 @@ type PerfstatCPUTotal struct {
 
 // PerfstatCPUTotalStat reads perfstat_cpu_total.
 func PerfstatCPUTotalStat() (*PerfstatCPUTotal, error) {
-	return nil, ErrNotImplementedError
+	t := new(PerfstatCPUTotal)
+	if _, err := callLib(&libperfstat_cpu_total, 4, 0, uintptr(unsafe.Pointer(t)), unsafe.Sizeof(*t), 1, 0, 0); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 // PerfstatCPUStats reads perfstat_cpu for every logical CPU.
 func PerfstatCPUStats() ([]PerfstatCPU, error) {
-	return nil, ErrNotImplementedError
+	size := unsafe.Sizeof(PerfstatCPU{})
+	n, err := callLib(&libperfstat_cpu, 4, 0, 0, size, 0, 0, 0)
+	if err != nil || n == 0 {
+		return nil, err
+	}
+	cpus := make([]PerfstatCPU, n)
+	first := new([64]byte) // an empty name starts at the first CPU
+	n, err = callLib(&libperfstat_cpu, 4, uintptr(unsafe.Pointer(first)), uintptr(unsafe.Pointer(&cpus[0])), size, uintptr(n), 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return cpus[:n], nil
 }
 
 // CString returns the NUL-terminated string at the start of b.

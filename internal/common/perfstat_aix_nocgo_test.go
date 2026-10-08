@@ -41,8 +41,8 @@ func TestPerfstatCPUStats_Live(t *testing.T) {
 	assert.Equal(t, "cpu0", CString(cpus[0].Name[:]))
 
 	var idle uint64
-	for _, c := range cpus {
-		idle += c.Idle
+	for i := range cpus {
+		idle += cpus[i].Idle
 	}
 	// Both reads are cumulative, so the per-CPU sum taken second can only be at or above the total.
 	assert.GreaterOrEqual(t, idle, total.Idle)
