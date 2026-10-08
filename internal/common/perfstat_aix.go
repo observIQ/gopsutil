@@ -22,6 +22,7 @@ import (
 //go:cgo_import_dynamic libperfstat_netinterface perfstat_netinterface "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_memory_total perfstat_memory_total "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_pagingspace perfstat_pagingspace "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libperfstat_partition_total perfstat_partition_total "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libc_mntctl mntctl "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getevars getevars "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
@@ -33,6 +34,7 @@ import (
 //go:linkname libperfstat_netinterface libperfstat_netinterface
 //go:linkname libperfstat_memory_total libperfstat_memory_total
 //go:linkname libperfstat_pagingspace libperfstat_pagingspace
+//go:linkname libperfstat_partition_total libperfstat_partition_total
 //go:linkname libc_mntctl libc_mntctl
 //go:linkname libc_getevars libc_getevars
 //go:linkname libc_getprocs64 libc_getprocs64
@@ -42,7 +44,7 @@ type libFunc uintptr
 
 //nolint:revive // names must match the linkname symbols
 var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libperfstat_netinterface,
-	libperfstat_memory_total, libperfstat_pagingspace, libc_mntctl, libc_getevars, libc_getprocs64, libc_getthrds64 libFunc
+	libperfstat_memory_total, libperfstat_pagingspace, libperfstat_partition_total, libc_mntctl, libc_getevars, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -241,7 +243,11 @@ type PerfstatPartitionTotal struct {
 
 // PerfstatPartitionTotalStat reads perfstat_partition_total.
 func PerfstatPartitionTotalStat() (*PerfstatPartitionTotal, error) {
-	return nil, ErrNotImplementedError
+	p := new(PerfstatPartitionTotal)
+	if _, err := callLib(&libperfstat_partition_total, 4, 0, uintptr(unsafe.Pointer(p)), unsafe.Sizeof(*p), 1, 0, 0); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // AIXMount is one entry of the mount table from mntctl(MCTL_QUERY).

@@ -192,12 +192,10 @@ func VirtualizationWithContext(ctx context.Context) (string, string, error) {
 		}
 	}
 
-	// Check for LPAR (Logical Partition) via PowerVM.
-	// uname -L returns "<id> <name>", e.g. "25 soaix422". If name is "NULL", no LPAR.
-	out, err = getInvoker().CommandWithContext(ctx, "uname", "-L")
-	if err == nil {
-		fields := strings.Fields(strings.TrimSpace(string(out)))
-		if len(fields) >= 2 && fields[1] != "NULL" {
+	// Check for LPAR (Logical Partition) via PowerVM. Outside one, the partition
+	// name is "NULL", as uname -L prints it.
+	if p, err := perfstatPartitionTotalStat(); err == nil {
+		if name := common.CString(p.Name[:]); name != "" && name != "NULL" {
 			return "powervm", "guest", nil
 		}
 	}
