@@ -26,6 +26,9 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(80), unsafe.Offsetof(PerfstatCPUTotal{}.User))
 	assert.Equal(t, uintptr(96), unsafe.Offsetof(PerfstatCPUTotal{}.Idle))
 	assert.Equal(t, uintptr(104), unsafe.Offsetof(PerfstatCPUTotal{}.Wait))
+	assert.Equal(t, uintptr(112), unsafe.Offsetof(PerfstatCPUTotal{}.PSwitch))
+	assert.Equal(t, uintptr(120), unsafe.Offsetof(PerfstatCPUTotal{}.Syscall))
+	assert.Equal(t, uintptr(176), unsafe.Offsetof(PerfstatCPUTotal{}.DevIntrs))
 	assert.Equal(t, uintptr(192), unsafe.Offsetof(PerfstatCPUTotal{}.Lbolt))
 	assert.Equal(t, uintptr(200), unsafe.Offsetof(PerfstatCPUTotal{}.LoadAvg))
 
