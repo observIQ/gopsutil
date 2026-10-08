@@ -37,8 +37,11 @@ const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
 
-// aixProcesses reads the getprocs64 process table, swapped out in tests.
-var aixProcesses = common.AIXProcesses
+// libc reads, swapped out in tests.
+var (
+	aixProcesses  = common.AIXProcesses
+	aixProcessEnv = common.AIXProcessEnv
+)
 
 // aixPSEntry is one process's counters in the snapshot.
 type aixPSEntry struct {
