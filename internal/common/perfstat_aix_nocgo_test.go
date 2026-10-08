@@ -41,6 +41,16 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(384), unsafe.Offsetof(PerfstatDisk{}.WServ))
 	assert.Equal(t, uintptr(440), unsafe.Offsetof(PerfstatDisk{}.WQTime))
 
+	assert.Equal(t, uintptr(240), unsafe.Sizeof(PerfstatNetInterface{}))
+	assert.Equal(t, uintptr(144), unsafe.Offsetof(PerfstatNetInterface{}.IPackets))
+	assert.Equal(t, uintptr(152), unsafe.Offsetof(PerfstatNetInterface{}.IBytes))
+	assert.Equal(t, uintptr(160), unsafe.Offsetof(PerfstatNetInterface{}.IErrors))
+	assert.Equal(t, uintptr(168), unsafe.Offsetof(PerfstatNetInterface{}.OPackets))
+	assert.Equal(t, uintptr(176), unsafe.Offsetof(PerfstatNetInterface{}.OBytes))
+	assert.Equal(t, uintptr(184), unsafe.Offsetof(PerfstatNetInterface{}.OErrors))
+	assert.Equal(t, uintptr(208), unsafe.Offsetof(PerfstatNetInterface{}.XmitDrops))
+	assert.Equal(t, uintptr(224), unsafe.Offsetof(PerfstatNetInterface{}.IfIqDrops))
+
 	assert.Equal(t, uintptr(5024), unsafe.Sizeof(AIXProcess{}))
 	assert.Equal(t, uintptr(52), unsafe.Offsetof(AIXProcess{}.State))
 	assert.Equal(t, uintptr(56), unsafe.Offsetof(AIXProcess{}.Flags))
@@ -95,4 +105,12 @@ func TestPerfstatDiskStats_Live(t *testing.T) {
 	require.GreaterOrEqual(t, i, 0, "hdisk0 listed")
 	assert.Equal(t, uint64(512), disks[i].BSize)
 	assert.Positive(t, disks[i].Xfers)
+}
+
+func TestPerfstatNetInterfaceStats_Live(t *testing.T) {
+	ifs, err := PerfstatNetInterfaceStats()
+	require.NoError(t, err)
+	i := slices.IndexFunc(ifs, func(n PerfstatNetInterface) bool { return CString(n.Name[:]) == "lo0" })
+	require.GreaterOrEqual(t, i, 0, "lo0 listed")
+	assert.Positive(t, ifs[i].IBytes)
 }
