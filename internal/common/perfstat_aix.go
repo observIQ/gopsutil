@@ -8,8 +8,10 @@ package common
 // runtime's syscall6 (reached through asm_aix_ppc64.s) makes the call.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -21,6 +23,7 @@ import (
 //go:cgo_import_dynamic libperfstat_memory_total perfstat_memory_total "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_pagingspace perfstat_pagingspace "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libc_mntctl mntctl "libc.a/shr_64.o"
+//go:cgo_import_dynamic libc_getevars getevars "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getthrds64 getthrds64 "libc.a/shr_64.o"
 
@@ -31,6 +34,7 @@ import (
 //go:linkname libperfstat_memory_total libperfstat_memory_total
 //go:linkname libperfstat_pagingspace libperfstat_pagingspace
 //go:linkname libc_mntctl libc_mntctl
+//go:linkname libc_getevars libc_getevars
 //go:linkname libc_getprocs64 libc_getprocs64
 //go:linkname libc_getthrds64 libc_getthrds64
 
@@ -38,7 +42,7 @@ type libFunc uintptr
 
 //nolint:revive // names must match the linkname symbols
 var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libperfstat_netinterface,
-	libperfstat_memory_total, libperfstat_pagingspace, libc_mntctl, libc_getprocs64, libc_getthrds64 libFunc
+	libperfstat_memory_total, libperfstat_pagingspace, libc_mntctl, libc_getevars, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -371,7 +375,25 @@ func AIXThreads() ([]AIXThread, error) {
 
 // AIXProcessEnv reads a process's environment through getevars.
 func AIXProcessEnv(pid int32) ([]string, error) {
-	return nil, ErrNotImplementedError
+	pe := &AIXProcess{Pid: pid} // getevars takes a procentry64 naming the process
+	for size := 16 << 10; ; size *= 2 {
+		buf := make([]byte, size)
+		if _, err := callLib(&libc_getevars, 4, uintptr(unsafe.Pointer(pe)), unsafe.Sizeof(*pe), uintptr(unsafe.Pointer(&buf[0])), uintptr(size), 0, 0); err != nil {
+			return nil, err
+		}
+		// The variables are NUL-terminated and the list ends with an empty one.
+		end := bytes.Index(buf, []byte{0, 0})
+		if end < 0 && size < 4<<20 {
+			continue // truncated; retry with a larger buffer
+		}
+		if end < 0 {
+			end = len(buf)
+		}
+		if end == 0 {
+			return []string{}, nil
+		}
+		return strings.Split(string(buf[:end]), "\x00"), nil
+	}
 }
 
 // CString returns the NUL-terminated string at the start of b.
