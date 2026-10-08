@@ -31,11 +31,8 @@ var pageSize = uint64(os.Getpagesize())
 // AIX-specific: cache for process bitness (4 = 32-bit, 8 = 64-bit)
 var aixBitnessCache sync.Map // map[int32]int64
 
-// AIX reports per-process disk I/O (ps tdiskio) only while Workload Manager runs; otherwise every process shows "-".
-var errAIXWLMNotRunning = errors.New("per-process disk I/O needs AIX Workload Manager running (start it with wlmcntrl -p)")
-
-// aixPSMaxAge is how long one ps snapshot of every process is reused,
-// so a scrape costs one ps instead of one per process. The counters only grow, so a reading this old is fine.
+// aixPSMaxAge is how long one snapshot of every process is reused,
+// so a scrape reads the process table once instead of once per process. The counters only grow, so a reading this old is fine.
 const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
@@ -43,18 +40,16 @@ var aixNow = time.Now
 // aixProcesses reads the getprocs64 process table, swapped out in tests.
 var aixProcesses = common.AIXProcesses
 
-// aixPSEntry is one process's row in the snapshot, each column as ps printed it.
-// tdiskio is "-" while WLM is not running; a zombie prints both columns empty.
+// aixPSEntry is one process's counters in the snapshot.
 type aixPSEntry struct {
-	pagein  string
-	tdiskio string
+	majorFaults uint64
+	ioChars     uint64 // bytes moved through read and write calls (pi_ioch); needs no WLM
 }
 
-// aixPS is the shared ps snapshot behind disk I/O and page faults.
+// aixPS is the shared getprocs64 snapshot behind disk I/O and page faults. Kernel processes and zombies are in it.
 var aixPS struct {
 	sync.Mutex
 	taken  time.Time
-	wlmOn  bool
 	byPID  map[int32]aixPSEntry
 	loaded bool
 }
@@ -62,77 +57,47 @@ var aixPS struct {
 func resetAIXPS() {
 	aixPS.Lock()
 	defer aixPS.Unlock()
-	aixPS.taken, aixPS.wlmOn, aixPS.byPID, aixPS.loaded = time.Time{}, false, nil, false
+	aixPS.taken, aixPS.byPID, aixPS.loaded = time.Time{}, nil, false
 }
 
 // refreshAIXPS retakes the snapshot. Callers hold aixPS's lock.
-func refreshAIXPS(ctx context.Context) error {
-	// wlmcntrl -q exits non-zero when WLM is stopped (1) or passive (2), so read its message rather than its status
-	out, _ := invoke.CommandWithContext(ctx, "wlmcntrl", "-q")
-	wlmOn := strings.Contains(string(out), "WLM is running")
-	// -k adds kernel processes, which -e leaves out. pagein needs no WLM, so ps runs either way.
-	out, err := invoke.CommandWithContext(ctx, "ps", "-ek", "-o", "pid=,pagein=,tdiskio=")
+func refreshAIXPS() error {
+	procs, err := aixProcesses()
 	if err != nil {
 		return err
 	}
-	byPID := map[int32]aixPSEntry{}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		pid, err := strconv.ParseInt(fields[0], 10, 32)
-		if err != nil {
-			continue
-		}
-		var e aixPSEntry
-		if len(fields) > 1 {
-			e.pagein = fields[1]
-		}
-		if len(fields) > 2 {
-			e.tdiskio = fields[2]
-		}
-		byPID[int32(pid)] = e
+	byPID := make(map[int32]aixPSEntry, len(procs))
+	for i := range procs {
+		pr := &procs[i]
+		byPID[pr.Pid] = aixPSEntry{majorFaults: uint64(pr.MajFlt), ioChars: uint64(pr.IOChars)}
 	}
-	aixPS.taken, aixPS.wlmOn, aixPS.byPID, aixPS.loaded = aixNow(), wlmOn, byPID, true
+	aixPS.taken, aixPS.byPID, aixPS.loaded = aixNow(), byPID, true
 	return nil
 }
 
-// aixPSFor returns pid's row from a snapshot at most aixPSMaxAge old, and whether WLM was running when it was taken.
+// aixPSFor returns pid's counters from a snapshot at most aixPSMaxAge old.
 // A PID missing from an older snapshot (a process started since) retakes it once.
-func aixPSFor(ctx context.Context, pid int32) (aixPSEntry, bool, error) {
+func aixPSFor(pid int32) (aixPSEntry, error) {
 	aixPS.Lock()
 	defer aixPS.Unlock()
 	fresh := false
 	if !aixPS.loaded || aixNow().Sub(aixPS.taken) >= aixPSMaxAge {
-		if err := refreshAIXPS(ctx); err != nil {
-			return aixPSEntry{}, false, err
+		if err := refreshAIXPS(); err != nil {
+			return aixPSEntry{}, err
 		}
 		fresh = true
 	}
 	e, ok := aixPS.byPID[pid]
 	if !ok && !fresh {
-		if err := refreshAIXPS(ctx); err != nil {
-			return aixPSEntry{}, false, err
+		if err := refreshAIXPS(); err != nil {
+			return aixPSEntry{}, err
 		}
 		e, ok = aixPS.byPID[pid]
 	}
 	if !ok {
-		return aixPSEntry{}, aixPS.wlmOn, ErrorProcessNotRunning
+		return aixPSEntry{}, ErrorProcessNotRunning
 	}
-	return e, aixPS.wlmOn, nil
-}
-
-// aixDiskIOFor returns pid's tdiskio, or errAIXWLMNotRunning when WLM is not running.
-func aixDiskIOFor(ctx context.Context, pid int32) (string, error) {
-	e, wlmOn, err := aixPSFor(ctx, pid)
-	if !wlmOn {
-		return "", errAIXWLMNotRunning
-	}
-	if err != nil {
-		return "", err
-	}
-	return e.tdiskio, nil
+	return e, nil
 }
 
 const prioProcess = 0 // linux/resource.h
@@ -520,32 +485,13 @@ func (p *Process) RlimitUsageWithContext(ctx context.Context, _ bool) ([]RlimitS
 	return p.fillFromLimitsWithContext(ctx)
 }
 
-func (p *Process) IOCountersWithContext(ctx context.Context) (*IOCountersStat, error) {
-	ioCountStr, err := aixDiskIOFor(ctx, p.Pid)
+func (p *Process) IOCountersWithContext(_ context.Context) (*IOCountersStat, error) {
+	e, err := aixPSFor(p.Pid)
 	if err != nil {
 		return nil, err
 	}
-
-	// A zombie does no more I/O, so report zero rather than an error, as the other zombie fallbacks do
-	if ioCountStr == "" {
-		return &IOCountersStat{}, nil
-	}
-
-	// Check for hyphen (unavailable data)
-	if ioCountStr == "-" {
-		return nil, errors.New("I/O counters not available for this process")
-	}
-
-	// Parse the I/O count
-	ioCount, err := strconv.ParseUint(ioCountStr, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	return &IOCountersStat{
-		ReadBytes:  ioCount,
-		WriteBytes: 0, // AIX doesn't separate read/write I/O
-	}, nil
+	// AIX counts read and write bytes together, so the total goes in ReadBytes.
+	return &IOCountersStat{ReadBytes: e.ioChars}, nil
 }
 
 func (*Process) NumCtxSwitchesWithContext(_ context.Context) (*NumCtxSwitchesStat, error) {
@@ -1433,11 +1379,8 @@ func extractFnameString(psinfo *AIXPSInfo) string {
 func (*Process) fillFromIOWithContext(_ context.Context) (*IOCountersStat, error) {
 	// AIX /proc does not expose per-process I/O byte counters. The procfs
 	// binary structures (pstatus_t, psinfo_t) contain no read/write byte
-	// fields. The ps format specifier "tdiskio" provides only a single
-	// aggregate I/O count (see IOCountersWithContext above), not separate
-	// read/write byte totals. The cgo perfstat library
-	// (perfstat_process_t) could provide this data but is unavailable in
-	// nocgo builds.
+	// fields. getprocs64 gives only one combined count (see
+	// IOCountersWithContext above), and perfstat_process reports zero.
 	return nil, common.ErrNotImplementedError
 }
 
@@ -1709,22 +1652,13 @@ func (p *Process) fillFromTIDStatWithContext(ctx context.Context, tid int32) (ui
 	return 0, int32(ppid), cpuTimes, createTime, uint32(rtpriority), nice, pageFaults, nil
 }
 
-// getPageFaults retrieves page fault information for the process.
-// Uses `ps -o pagein=` which returns the cumulative major page-in count.
-// AIX does not expose minor faults separately.
-func (p *Process) getPageFaults(ctx context.Context) (*PageFaultsStat, error) {
-	e, _, err := aixPSFor(ctx, p.Pid)
+// getPageFaults returns the process's major (I/O) page faults, pi_majflt from the shared snapshot.
+func (p *Process) getPageFaults(_ context.Context) (*PageFaultsStat, error) {
+	e, err := aixPSFor(p.Pid)
 	if err != nil {
 		return nil, err
 	}
-
-	// A zombie's pagein is empty, so it reads as zero like the other zombie fallbacks
-	pageFaults := &PageFaultsStat{}
-	if pagein, err := strconv.ParseUint(e.pagein, 10, 64); err == nil {
-		pageFaults.MajorFaults = pagein
-	}
-
-	return pageFaults, nil
+	return &PageFaultsStat{MajorFaults: e.majorFaults}, nil
 }
 
 func (p *Process) fillFromStatWithContext(ctx context.Context) (uint64, int32, *cpu.TimesStat, int64, uint32, int32, *PageFaultsStat, error) {
