@@ -44,9 +44,32 @@ var (
 	aixTTYName    = lookupAIXTTY
 )
 
-// lookupAIXTTY returns the /dev path, relative to /dev, of the terminal with device number dev.
-func lookupAIXTTY(_ uint64) string {
-	return ""
+// aixTTYs maps terminal device numbers to their paths under /dev, rescanned on a miss.
+var aixTTYs struct {
+	sync.Mutex
+	byDev map[uint64]string
+}
+
+// lookupAIXTTY returns the path, relative to /dev, of the terminal with device number dev.
+func lookupAIXTTY(dev uint64) string {
+	aixTTYs.Lock()
+	defer aixTTYs.Unlock()
+	if name, ok := aixTTYs.byDev[dev]; ok {
+		return name
+	}
+	byDev := map[uint64]string{}
+	for _, prefix := range []string{"pts/", ""} {
+		entries, _ := os.ReadDir("/dev/" + prefix)
+		for _, e := range entries {
+			name := prefix + e.Name()
+			var st syscall.Stat_t
+			if syscall.Stat("/dev/"+name, &st) == nil && st.Mode&syscall.S_IFMT == syscall.S_IFCHR {
+				byDev[uint64(st.Rdev)] = name
+			}
+		}
+	}
+	aixTTYs.byDev = byDev
+	return byDev[dev]
 }
 
 // aixPSEntry is one process's counters in the snapshot.
@@ -434,27 +457,24 @@ func (p *Process) GroupsWithContext(ctx context.Context) ([]uint32, error) {
 	return p.groups, nil
 }
 
+// TerminalWithContext returns the controlling terminal from psinfo, or "-" without one, as ps prints it.
 func (p *Process) TerminalWithContext(ctx context.Context) (string, error) {
-	// Query TTY via ps command
-	//nolint:gosec // Process ID from internal tracking, not untrusted input
-	cmd := exec.CommandContext(ctx, "ps", "-o", "tty", "-p", strconv.Itoa(int(p.Pid)))
-	output, err := cmd.Output()
+	f, err := os.Open(common.HostProcWithContext(ctx, strconv.Itoa(int(p.Pid)), "psinfo"))
 	if err != nil {
 		return "", err
 	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 2 {
-		// Only header or no output
-		return "", nil
+	defer f.Close()
+	var info AIXPSInfo
+	if err := binary.Read(f, binary.BigEndian, &info); err != nil {
+		return "", err
 	}
-
-	// Get the TTY value (second line, first field)
-	tty := strings.Fields(lines[1])
-	if len(tty) > 0 {
-		return tty[0], nil
+	if info.Ttydev == 0 {
+		return "-", nil
 	}
-	return "", nil
+	if name := aixTTYName(info.Ttydev); name != "" {
+		return name, nil
+	}
+	return "-", nil
 }
 
 func (p *Process) NiceWithContext(ctx context.Context) (int32, error) {
