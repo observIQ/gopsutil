@@ -369,6 +369,11 @@ func AIXThreads() ([]AIXThread, error) {
 	}
 }
 
+// AIXProcessEnv reads a process's environment through getevars.
+func AIXProcessEnv(pid int32) ([]string, error) {
+	return nil, ErrNotImplementedError
+}
+
 // CString returns the NUL-terminated string at the start of b.
 func CString(b []byte) string {
 	for i, c := range b {

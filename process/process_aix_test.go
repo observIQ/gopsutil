@@ -557,6 +557,19 @@ func TestTimesWithContext_SharesSnapshot(t *testing.T) {
 	assert.Equal(t, 1, f.calls, "times, ppid, and disk I/O for every process should share one read")
 }
 
+func TestEnvironWithContext_FromGetevars(t *testing.T) {
+	orig := aixProcessEnv
+	aixProcessEnv = func(pid int32) ([]string, error) {
+		assert.Equal(t, int32(424242), pid)
+		return []string{"TERM=dumb", "MSG=two words"}, nil
+	}
+	t.Cleanup(func() { aixProcessEnv = orig })
+
+	env, err := (&Process{Pid: 424242}).EnvironWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"TERM=dumb", "MSG=two words"}, env)
+}
+
 func TestCPUAffinityWithContext(t *testing.T) {
 	// Get current process
 	ctx := context.Background()
