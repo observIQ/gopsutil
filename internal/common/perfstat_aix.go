@@ -8,6 +8,7 @@ package common
 // runtime's syscall6 (reached through asm_aix_ppc64.s) makes the call.
 
 import (
+	"encoding/binary"
 	"errors"
 	"syscall"
 	"unsafe"
@@ -19,6 +20,7 @@ import (
 //go:cgo_import_dynamic libperfstat_netinterface perfstat_netinterface "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_memory_total perfstat_memory_total "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_pagingspace perfstat_pagingspace "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libc_mntctl mntctl "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
 //go:cgo_import_dynamic libc_getthrds64 getthrds64 "libc.a/shr_64.o"
 
@@ -28,6 +30,7 @@ import (
 //go:linkname libperfstat_netinterface libperfstat_netinterface
 //go:linkname libperfstat_memory_total libperfstat_memory_total
 //go:linkname libperfstat_pagingspace libperfstat_pagingspace
+//go:linkname libc_mntctl libc_mntctl
 //go:linkname libc_getprocs64 libc_getprocs64
 //go:linkname libc_getthrds64 libc_getthrds64
 
@@ -35,7 +38,7 @@ type libFunc uintptr
 
 //nolint:revive // names must match the linkname symbols
 var libperfstat_cpu, libperfstat_cpu_total, libperfstat_disk, libperfstat_netinterface,
-	libperfstat_memory_total, libperfstat_pagingspace, libc_getprocs64, libc_getthrds64 libFunc
+	libperfstat_memory_total, libperfstat_pagingspace, libc_mntctl, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -234,7 +237,54 @@ type AIXMount struct {
 
 // AIXMounts reads the mount table through mntctl.
 func AIXMounts() ([]AIXMount, error) {
-	return nil, ErrNotImplementedError
+	const mctlQuery = 2 // MCTL_QUERY in sys/vmount.h
+	buf := make([]byte, 8192)
+	n, err := callLib(&libc_mntctl, 3, mctlQuery, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), 0, 0, 0)
+	if err == nil && n == 0 {
+		// The buffer was too small; mntctl put the size it needs in the first word.
+		buf = make([]byte, binary.BigEndian.Uint32(buf))
+		n, err = callLib(&libc_mntctl, 3, mctlQuery, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), 0, 0, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseVmounts(buf, n), nil
+}
+
+// parseVmounts reads n struct vmount records from sys/vmount.h. Each record holds
+// vmt_length at offset 4, vmt_gfstype at 40, and from 44 an array of {offset, size}
+// int16 pairs locating its strings, all checked with gcc on AIX 7.2 and 7.3.
+func parseVmounts(buf []byte, n int) []AIXMount {
+	const (
+		vmtObject, vmtStub, vmtHost, vmtArgs = 0, 1, 2, 5
+		vmtData                              = 44
+	)
+	ret := make([]AIXMount, 0, n)
+	for off := 0; len(ret) < n && off+vmtData+6*4 <= len(buf); {
+		rec := buf[off:]
+		length := int(binary.BigEndian.Uint32(rec[4:]))
+		if length <= 0 || off+length > len(buf) {
+			break
+		}
+		rec = rec[:length]
+		str := func(i int) string {
+			o := int(binary.BigEndian.Uint16(rec[vmtData+4*i:]))
+			size := int(binary.BigEndian.Uint16(rec[vmtData+4*i+2:]))
+			if o+size > len(rec) {
+				return ""
+			}
+			return CString(rec[o : o+size])
+		}
+		ret = append(ret, AIXMount{
+			Object:  str(vmtObject),
+			Stub:    str(vmtStub),
+			Host:    str(vmtHost),
+			Args:    str(vmtArgs),
+			GfsType: int32(binary.BigEndian.Uint32(rec[40:])),
+		})
+		off += length
+	}
+	return ret
 }
 
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through

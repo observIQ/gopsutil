@@ -5,13 +5,11 @@ package disk
 
 import (
 	"context"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
-
-var startBlank = regexp.MustCompile(`^\s+`)
 
 var ignoreFSType = map[string]bool{"procfs": true}
 
@@ -52,73 +50,53 @@ func IOCountersWithContext(_ context.Context, names ...string) (map[string]IOCou
 }
 
 func PartitionsWithContext(ctx context.Context, _ bool) ([]PartitionStat, error) {
-	var ret []PartitionStat
-
-	out, err := invoke.CommandWithContext(ctx, "mount")
+	mounts, err := aixMounts()
 	if err != nil {
 		return nil, err
 	}
-
-	// parse head lines for column names
-	colidx := make(map[string]int)
-	lines := strings.Split(string(out), "\n")
-	if len(lines) < 3 {
-		return nil, common.ErrNotImplementedError
-	}
-
-	idx := 0
-	start := 0
-	finished := false
-	for pos, ch := range lines[1] {
-		if ch == ' ' && !finished {
-			name := strings.TrimSpace(lines[0][start:pos])
-			colidx[name] = idx
-			finished = true
-		} else if ch == '-' && finished {
-			idx++
-			start = pos
-			finished = false
-		}
-	}
-	name := strings.TrimSpace(lines[0][start:len(lines[1])])
-	colidx[name] = idx
-
-	for idx := 2; idx < len(lines); idx++ {
-		line := lines[idx]
-		if startBlank.MatchString(line) {
-			line = "localhost" + line
-		}
-		p := strings.Fields(line)
-		if len(p) < 5 || ignoreFSType[p[colidx["vfs"]]] {
+	names := vfsNames(ctx)
+	var ret []PartitionStat
+	for _, m := range mounts {
+		fstype := names[m.GfsType]
+		if ignoreFSType[fstype] {
 			continue
 		}
-		d := PartitionStat{
-			Device:     p[colidx["mounted"]],
-			Mountpoint: p[colidx["mounted over"]],
-			Fstype:     p[colidx["vfs"]],
-			Opts:       strings.Split(p[colidx["options"]], ","),
-		}
-
-		ret = append(ret, d)
+		ret = append(ret, PartitionStat{
+			Device:     m.Object,
+			Mountpoint: m.Stub,
+			Fstype:     fstype,
+			Opts:       strings.Split(m.Args, ","),
+		})
 	}
-
 	return ret, nil
 }
 
 func GetMountFSTypeWithContext(ctx context.Context, mp string) (string, error) {
-	out, err := invoke.CommandWithContext(ctx, "mount")
+	mounts, err := aixMounts()
 	if err != nil {
 		return "", err
 	}
-
-	// Kind of inefficient, but it works
-	lines := strings.Split(string(out), "\n")
-	for line := 1; line < len(lines); line++ {
-		fields := strings.Fields(lines[line])
-		if strings.TrimSpace(fields[0]) == mp {
-			return fields[2], nil
+	for _, m := range mounts {
+		if m.Stub == mp {
+			return vfsNames(ctx)[m.GfsType], nil
 		}
 	}
-
 	return "", nil
+}
+
+// vfsNames maps filesystem type numbers to names from /etc/vfs, as mount does.
+// Each entry line reads "name number mount_helper filsys_helper [remote]".
+func vfsNames(ctx context.Context) map[int32]string {
+	names := map[int32]string{}
+	lines, _ := common.ReadLines(common.HostEtcWithContext(ctx, "vfs"))
+	for _, line := range lines {
+		f := strings.Fields(line)
+		if len(f) < 2 || strings.HasPrefix(f[0], "#") || strings.HasPrefix(f[0], "%") {
+			continue
+		}
+		if n, err := strconv.ParseInt(f[1], 10, 32); err == nil {
+			names[int32(n)] = f[0]
+		}
+	}
+	return names
 }
