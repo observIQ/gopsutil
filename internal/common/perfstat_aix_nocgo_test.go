@@ -51,6 +51,23 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(208), unsafe.Offsetof(PerfstatNetInterface{}.XmitDrops))
 	assert.Equal(t, uintptr(224), unsafe.Offsetof(PerfstatNetInterface{}.IfIqDrops))
 
+	assert.Equal(t, uintptr(352), unsafe.Sizeof(PerfstatMemoryTotal{}))
+	assert.Equal(t, uintptr(8), unsafe.Offsetof(PerfstatMemoryTotal{}.RealTotal))
+	assert.Equal(t, uintptr(16), unsafe.Offsetof(PerfstatMemoryTotal{}.RealFree))
+	assert.Equal(t, uintptr(32), unsafe.Offsetof(PerfstatMemoryTotal{}.RealInUse))
+	assert.Equal(t, uintptr(56), unsafe.Offsetof(PerfstatMemoryTotal{}.PgIns))
+	assert.Equal(t, uintptr(64), unsafe.Offsetof(PerfstatMemoryTotal{}.PgOuts))
+	assert.Equal(t, uintptr(72), unsafe.Offsetof(PerfstatMemoryTotal{}.PgSpIns))
+	assert.Equal(t, uintptr(80), unsafe.Offsetof(PerfstatMemoryTotal{}.PgSpOuts))
+	assert.Equal(t, uintptr(120), unsafe.Offsetof(PerfstatMemoryTotal{}.PgSpTotal))
+	assert.Equal(t, uintptr(128), unsafe.Offsetof(PerfstatMemoryTotal{}.PgSpFree))
+	assert.Equal(t, uintptr(168), unsafe.Offsetof(PerfstatMemoryTotal{}.VirtActive))
+	assert.Equal(t, uintptr(328), unsafe.Offsetof(PerfstatMemoryTotal{}.RealAvail))
+
+	assert.Equal(t, uintptr(248), unsafe.Sizeof(PerfstatPagingSpace{}))
+	assert.Equal(t, uintptr(208), unsafe.Offsetof(PerfstatPagingSpace{}.MBSize))
+	assert.Equal(t, uintptr(216), unsafe.Offsetof(PerfstatPagingSpace{}.MBUsed))
+
 	assert.Equal(t, uintptr(5024), unsafe.Sizeof(AIXProcess{}))
 	assert.Equal(t, uintptr(52), unsafe.Offsetof(AIXProcess{}.State))
 	assert.Equal(t, uintptr(56), unsafe.Offsetof(AIXProcess{}.Flags))
@@ -113,4 +130,16 @@ func TestPerfstatNetInterfaceStats_Live(t *testing.T) {
 	i := slices.IndexFunc(ifs, func(n PerfstatNetInterface) bool { return CString(n.Name[:]) == "lo0" })
 	require.GreaterOrEqual(t, i, 0, "lo0 listed")
 	assert.Positive(t, ifs[i].IBytes)
+}
+
+func TestPerfstatMemory_Live(t *testing.T) {
+	m, err := PerfstatMemoryTotalStat()
+	require.NoError(t, err)
+	assert.Positive(t, m.RealTotal)
+	assert.LessOrEqual(t, m.RealFree, m.RealTotal)
+
+	spaces, err := PerfstatPagingSpaceStats()
+	require.NoError(t, err)
+	require.NotEmpty(t, spaces)
+	assert.Positive(t, spaces[0].MBSize)
 }

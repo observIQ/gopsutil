@@ -13,6 +13,12 @@ import (
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
+// perfstat reads, swapped out in tests.
+var (
+	perfstatMemoryTotalStat  = common.PerfstatMemoryTotalStat
+	perfstatPagingSpaceStats = common.PerfstatPagingSpaceStats
+)
+
 func VirtualMemoryWithContext(ctx context.Context) (*VirtualMemoryStat, error) {
 	vmem, swap, err := callSVMon(ctx, true)
 	if err != nil {
