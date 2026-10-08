@@ -15,8 +15,11 @@ var startBlank = regexp.MustCompile(`^\s+`)
 
 var ignoreFSType = map[string]bool{"procfs": true}
 
-// perfstatDiskStats reads perfstat_disk, swapped out in tests.
-var perfstatDiskStats = common.PerfstatDiskStats
+// perfstat and libc reads, swapped out in tests.
+var (
+	perfstatDiskStats = common.PerfstatDiskStats
+	aixMounts         = common.AIXMounts
+)
 
 func IOCountersWithContext(_ context.Context, names ...string) (map[string]IOCountersStat, error) {
 	disks, err := perfstatDiskStats()

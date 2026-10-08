@@ -223,6 +223,20 @@ func PerfstatPagingSpaceStats() ([]PerfstatPagingSpace, error) {
 	return perfstatEnumerate[PerfstatPagingSpace](&libperfstat_pagingspace)
 }
 
+// AIXMount is one entry of the mount table from mntctl(MCTL_QUERY).
+type AIXMount struct {
+	Object  string // the mounted device or remote path
+	Stub    string // the mount point
+	Host    string // "-" for a local mount
+	Args    string // mount options, as mount prints them
+	GfsType int32  // filesystem type number, named in /etc/vfs
+}
+
+// AIXMounts reads the mount table through mntctl.
+func AIXMounts() ([]AIXMount, error) {
+	return nil, ErrNotImplementedError
+}
+
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
 // getprocs64. Offsets and the 5024-byte size were checked with gcc on AIX 7.2 and 7.3.
 type AIXProcess struct {

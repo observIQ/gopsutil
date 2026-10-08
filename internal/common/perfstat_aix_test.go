@@ -146,3 +146,13 @@ func TestPerfstatMemory_Live(t *testing.T) {
 	require.NotEmpty(t, spaces)
 	assert.Positive(t, spaces[0].MBSize)
 }
+
+func TestAIXMounts_Live(t *testing.T) {
+	mounts, err := AIXMounts()
+	require.NoError(t, err)
+	i := slices.IndexFunc(mounts, func(m AIXMount) bool { return m.Stub == "/" })
+	require.GreaterOrEqual(t, i, 0, "root filesystem listed")
+	assert.Equal(t, "/dev/hd4", mounts[i].Object)
+	assert.Equal(t, int32(0), mounts[i].GfsType, "jfs2")
+	assert.Contains(t, mounts[i].Args, "rw")
+}

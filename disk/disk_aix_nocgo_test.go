@@ -60,3 +60,39 @@ func TestIOCountersWithContext_FiltersNames(t *testing.T) {
 	assert.Len(t, stats, 1)
 	assert.Contains(t, stats, "cd0")
 }
+
+func useFakeMounts(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOST_ETC", "testdata/aix") // vfs copied from AIX 7.3
+	orig := aixMounts
+	aixMounts = func() ([]common.AIXMount, error) {
+		return []common.AIXMount{
+			{Object: "/dev/hd4", Stub: "/", Host: "-", Args: "rw,log=/dev/hd8", GfsType: 0},
+			{Object: "/proc", Stub: "/proc", Host: "-", Args: "rw", GfsType: 6},
+			{Object: "/dev/hd1", Stub: "/home", Host: "-", Args: "rw,noatime,log=/dev/hd8", GfsType: 0},
+			{Object: "/export/data", Stub: "/mnt/data", Host: "filer", Args: "ro,bg,hard", GfsType: 18},
+		}, nil
+	}
+	t.Cleanup(func() { aixMounts = orig })
+}
+
+func TestPartitionsWithContext_FromMntctl(t *testing.T) {
+	useFakeMounts(t)
+
+	parts, err := PartitionsWithContext(context.Background(), true)
+	require.NoError(t, err)
+	// procfs is left out, as before.
+	assert.Equal(t, []PartitionStat{
+		{Device: "/dev/hd4", Mountpoint: "/", Fstype: "jfs2", Opts: []string{"rw", "log=/dev/hd8"}},
+		{Device: "/dev/hd1", Mountpoint: "/home", Fstype: "jfs2", Opts: []string{"rw", "noatime", "log=/dev/hd8"}},
+		{Device: "/export/data", Mountpoint: "/mnt/data", Fstype: "nfs3", Opts: []string{"ro", "bg", "hard"}},
+	}, parts)
+}
+
+func TestGetMountFSTypeWithContext_FromMntctl(t *testing.T) {
+	useFakeMounts(t)
+
+	fstype, err := GetMountFSTypeWithContext(context.Background(), "/mnt/data")
+	require.NoError(t, err)
+	assert.Equal(t, "nfs3", fstype)
+}
