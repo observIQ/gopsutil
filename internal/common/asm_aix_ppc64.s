@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-//go:build aix && !cgo
+//go:build aix
 
 #include "textflag.h"
 

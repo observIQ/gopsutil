@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
-//go:build aix && !cgo
+//go:build aix
 
 package common
 
-// Without cgo, gopsutil calls libperfstat directly, the way golang.org/x/sys/unix calls
-// libc on AIX: cgo_import_dynamic binds the symbol, linkname exposes it, and the
+// gopsutil calls libperfstat and libc directly, without cgo, the way golang.org/x/sys/unix
+// calls libc on AIX: cgo_import_dynamic binds the symbol, linkname exposes it, and the
 // runtime's syscall6 (reached through asm_aix_ppc64.s) makes the call.
 
 import (
