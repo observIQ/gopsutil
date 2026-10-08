@@ -1,0 +1,55 @@
+# @(#)77	1.30.1.5  src/bos/etc/vfs/vfs, cmdfs, bos730, initial_extract 1/15/09 14:07:28
+# IBM_PROLOG_BEGIN_TAG 
+# This is an automatically generated prolog. 
+#  
+# bos730 src/bos/etc/vfs/vfs 1.30.1.5 
+#  
+# Licensed Materials - Property of IBM 
+#  
+# COPYRIGHT International Business Machines Corp. 1985,2009 
+# All Rights Reserved 
+#  
+# US Government Users Restricted Rights - Use, duplication or 
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp. 
+#  
+# IBM_PROLOG_END_TAG 
+#
+# COMPONENT_NAME: CFGETC
+# 
+# FUNCTIONS: 
+#
+# ORIGINS: 27 
+#
+# (C) COPYRIGHT International Business Machines Corp. 1985, 1995
+# All Rights Reserved
+# Licensed Materials - Property of IBM
+#
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+#
+# this file describes the known virtual file system implementations.
+# format: (the name and vfs_number should match what is in <sys/vmount.h>)
+#
+# The standard helper directory is /etc/helpers
+#
+# name	vfs_number mount_helper filsys_helper
+#
+# Uncomment the following line to specify the local or remote default vfs.
+%defaultvfs	jfs2	nfs
+#
+cdrfs	5	none			none
+procfs	6	none			none
+jfs     3       none    		/sbin/helpers/v3fshelper
+jfs2	0       /sbin/helpers/jfs2	none
+nfs	2	/sbin/helpers/nfsmnthelp	none			remote
+sfs	16	none			none
+nfs3	18	/sbin/helpers/nfsmnthelp	none			remote
+cachefs 17	/sbin/helpers/cfsmnthelp	none			remote
+udfs	34	/sbin/helpers/udfmnthelp	none
+cifs    37      /sbin/helpers/mount_cifs        none
+namefs	1	none			none
+pmemfs	38	/sbin/helpers/pmemfsmnthelp	none
+ahafs	39	none			none
+stnfs	40	/sbin/helpers/stnfsmnthelp	none			remote
+nfs4	35	/sbin/helpers/nfsmnthelp	none			remote
+autofs	19		/sbin/helpers/aufsmnthelp	none
