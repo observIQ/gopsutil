@@ -166,6 +166,50 @@ func PerfstatNetInterfaceStats() ([]PerfstatNetInterface, error) {
 	return perfstatEnumerate[PerfstatNetInterface](&libperfstat_netinterface)
 }
 
+// PerfstatMemoryTotal is the part of perfstat_memory_total_t from libperfstat.h that
+// gopsutil reads. Counts are 4 KB pages. Offsets and the 352-byte size were checked with
+// gcc on AIX 7.2 and 7.3.
+type PerfstatMemoryTotal struct {
+	_          [8]byte
+	RealTotal  uint64
+	RealFree   uint64
+	_          [32 - 24]byte
+	RealInUse  uint64
+	_          [56 - 40]byte
+	PgIns      uint64
+	PgOuts     uint64
+	PgSpIns    uint64
+	PgSpOuts   uint64
+	_          [120 - 88]byte
+	PgSpTotal  uint64
+	PgSpFree   uint64
+	_          [168 - 136]byte
+	VirtActive uint64
+	_          [328 - 176]byte
+	RealAvail  uint64
+	_          [352 - 336]byte
+}
+
+// PerfstatPagingSpace is the part of perfstat_pagingspace_t from libperfstat.h that
+// gopsutil reads. Offsets and the 248-byte size were checked with gcc on AIX 7.2 and 7.3.
+type PerfstatPagingSpace struct {
+	Name   [64]byte
+	_      [208 - 64]byte
+	MBSize int64
+	MBUsed int64
+	_      [248 - 224]byte
+}
+
+// PerfstatMemoryTotalStat reads perfstat_memory_total.
+func PerfstatMemoryTotalStat() (*PerfstatMemoryTotal, error) {
+	return nil, ErrNotImplementedError
+}
+
+// PerfstatPagingSpaceStats reads perfstat_pagingspace for every paging space.
+func PerfstatPagingSpaceStats() ([]PerfstatPagingSpace, error) {
+	return nil, ErrNotImplementedError
+}
+
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
 // getprocs64. Offsets and the 5024-byte size were checked with gcc on AIX 7.2 and 7.3.
 type AIXProcess struct {
