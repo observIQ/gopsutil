@@ -29,6 +29,18 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(192), unsafe.Offsetof(PerfstatCPUTotal{}.Lbolt))
 	assert.Equal(t, uintptr(200), unsafe.Offsetof(PerfstatCPUTotal{}.LoadAvg))
 
+	assert.Equal(t, uintptr(496), unsafe.Sizeof(PerfstatDisk{}))
+	assert.Equal(t, uintptr(208), unsafe.Offsetof(PerfstatDisk{}.BSize))
+	assert.Equal(t, uintptr(216), unsafe.Offsetof(PerfstatDisk{}.XRate))
+	assert.Equal(t, uintptr(224), unsafe.Offsetof(PerfstatDisk{}.Xfers))
+	assert.Equal(t, uintptr(232), unsafe.Offsetof(PerfstatDisk{}.WBlks))
+	assert.Equal(t, uintptr(240), unsafe.Offsetof(PerfstatDisk{}.RBlks))
+	assert.Equal(t, uintptr(248), unsafe.Offsetof(PerfstatDisk{}.QDepth))
+	assert.Equal(t, uintptr(256), unsafe.Offsetof(PerfstatDisk{}.Time))
+	assert.Equal(t, uintptr(344), unsafe.Offsetof(PerfstatDisk{}.RServ))
+	assert.Equal(t, uintptr(384), unsafe.Offsetof(PerfstatDisk{}.WServ))
+	assert.Equal(t, uintptr(440), unsafe.Offsetof(PerfstatDisk{}.WQTime))
+
 	assert.Equal(t, uintptr(5024), unsafe.Sizeof(AIXProcess{}))
 	assert.Equal(t, uintptr(52), unsafe.Offsetof(AIXProcess{}.State))
 	assert.Equal(t, uintptr(56), unsafe.Offsetof(AIXProcess{}.Flags))
@@ -74,4 +86,13 @@ func TestAIXProcessesAndThreads_Live(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, slices.ContainsFunc(threads, func(th AIXThread) bool { return th.Pid == self && th.State == AIXThreadRunnable }),
 		"own thread listed as runnable")
+}
+
+func TestPerfstatDiskStats_Live(t *testing.T) {
+	disks, err := PerfstatDiskStats()
+	require.NoError(t, err)
+	i := slices.IndexFunc(disks, func(d PerfstatDisk) bool { return CString(d.Name[:]) == "hdisk0" })
+	require.GreaterOrEqual(t, i, 0, "hdisk0 listed")
+	assert.Equal(t, uint64(512), disks[i].BSize)
+	assert.Positive(t, disks[i].Xfers)
 }

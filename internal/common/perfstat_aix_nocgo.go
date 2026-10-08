@@ -106,6 +106,32 @@ func PerfstatCPUStats() ([]PerfstatCPU, error) {
 	return cpus[:n], nil
 }
 
+// PerfstatDisk is the part of perfstat_disk_t from libperfstat.h that gopsutil reads.
+// Offsets and the 496-byte size were checked with gcc on AIX 7.2 and 7.3.
+type PerfstatDisk struct {
+	Name   [64]byte
+	_      [208 - 64]byte
+	BSize  uint64
+	XRate  uint64 // reads
+	Xfers  uint64 // reads plus writes
+	WBlks  uint64
+	RBlks  uint64
+	QDepth uint64
+	Time   uint64 // busy ticks
+	_      [344 - 264]byte
+	RServ  uint64 // read service time, ns
+	_      [384 - 352]byte
+	WServ  uint64 // write service time, ns
+	_      [440 - 392]byte
+	WQTime uint64 // wait queue time, ns
+	_      [496 - 448]byte
+}
+
+// PerfstatDiskStats reads perfstat_disk for every disk.
+func PerfstatDiskStats() ([]PerfstatDisk, error) {
+	return nil, ErrNotImplementedError
+}
+
 // AIXProcess is the part of procentry64 from procinfo.h that gopsutil reads through
 // getprocs64. Offsets and the 5024-byte size were checked with gcc on AIX 7.2 and 7.3.
 type AIXProcess struct {
