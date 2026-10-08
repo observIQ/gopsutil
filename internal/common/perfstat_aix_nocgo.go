@@ -15,13 +15,18 @@ import (
 
 //go:cgo_import_dynamic libperfstat_cpu perfstat_cpu "libperfstat.a/shr_64.o"
 //go:cgo_import_dynamic libperfstat_cpu_total perfstat_cpu_total "libperfstat.a/shr_64.o"
+//go:cgo_import_dynamic libc_getprocs64 getprocs64 "libc.a/shr_64.o"
+//go:cgo_import_dynamic libc_getthrds64 getthrds64 "libc.a/shr_64.o"
 
 //go:linkname libperfstat_cpu libperfstat_cpu
 //go:linkname libperfstat_cpu_total libperfstat_cpu_total
+//go:linkname libc_getprocs64 libc_getprocs64
+//go:linkname libc_getthrds64 libc_getthrds64
 
 type libFunc uintptr
 
-var libperfstat_cpu, libperfstat_cpu_total libFunc //nolint:revive // names must match the linkname symbols
+//nolint:revive // names must match the linkname symbols
+var libperfstat_cpu, libperfstat_cpu_total, libc_getprocs64, libc_getthrds64 libFunc
 
 // Implemented in the runtime (syscall/syscall_aix.go), reached through asm_aix_ppc64.s.
 func syscall6(trap, nargs, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -148,12 +153,39 @@ func AIXVMMWait(waitType uint32) bool {
 
 // AIXProcesses reads every process through getprocs64.
 func AIXProcesses() ([]AIXProcess, error) {
-	return nil, ErrNotImplementedError
+	const batch = 256
+	var ret []AIXProcess
+	index := new(int32) // getprocs64 resumes after this pid
+	for {
+		buf := make([]AIXProcess, batch)
+		n, err := callLib(&libc_getprocs64, 6, uintptr(unsafe.Pointer(&buf[0])), unsafe.Sizeof(buf[0]), 0, 0, uintptr(unsafe.Pointer(index)), batch)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, buf[:n]...)
+		if n < batch {
+			return ret, nil
+		}
+	}
 }
 
 // AIXThreads reads every thread on the system through getthrds64.
 func AIXThreads() ([]AIXThread, error) {
-	return nil, ErrNotImplementedError
+	const batch = 256
+	allProcesses := uintptr(^uint32(0)) // pid -1
+	var ret []AIXThread
+	index := new(int64) // getthrds64 resumes after this thread id
+	for {
+		buf := make([]AIXThread, batch)
+		n, err := callLib(&libc_getthrds64, 5, allProcesses, uintptr(unsafe.Pointer(&buf[0])), unsafe.Sizeof(buf[0]), uintptr(unsafe.Pointer(index)), batch, 0)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, buf[:n]...)
+		if n < batch {
+			return ret, nil
+		}
+	}
 }
 
 // CString returns the NUL-terminated string at the start of b.
