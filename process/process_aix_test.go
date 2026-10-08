@@ -5,6 +5,7 @@ package process
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -568,6 +569,37 @@ func TestEnvironWithContext_FromGetevars(t *testing.T) {
 	env, err := (&Process{Pid: 424242}).EnvironWithContext(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"TERM=dumb", "MSG=two words"}, env)
+}
+
+func TestTerminalWithContext_FromPSInfo(t *testing.T) {
+	// A copy of a fixture psinfo with pr_ttydev (offset 80) set to the device of /dev/pts/0.
+	const pts0 = 0x8000001a00000000
+	b, err := os.ReadFile(fmt.Sprintf("testdata/aix/%d/psinfo", fixturePID))
+	require.NoError(t, err)
+	binary.BigEndian.PutUint64(b[80:], pts0)
+	proc := t.TempDir()
+	require.NoError(t, os.MkdirAll(fmt.Sprintf("%s/%d", proc, fixturePID), 0o755))
+	require.NoError(t, os.WriteFile(fmt.Sprintf("%s/%d/psinfo", proc, fixturePID), b, 0o600)) //nolint:gosec // a fixture under t.TempDir
+	t.Setenv("HOST_PROC", proc)
+	orig := aixTTYName
+	aixTTYName = func(dev uint64) string {
+		if dev == pts0 {
+			return "pts/0"
+		}
+		return ""
+	}
+	t.Cleanup(func() { aixTTYName = orig })
+
+	tty, err := (&Process{Pid: fixturePID}).TerminalWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "pts/0", tty)
+}
+
+func TestTerminalWithContext_NoTerminal(t *testing.T) {
+	t.Setenv("HOST_PROC", "testdata/aix") // the fixture's pr_ttydev is 0
+	tty, err := (&Process{Pid: fixturePID}).TerminalWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "-", tty, "ps prints - for a process without a terminal")
 }
 
 func TestCPUAffinityWithContext(t *testing.T) {

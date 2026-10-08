@@ -37,11 +37,17 @@ const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
 
-// libc reads, swapped out in tests.
+// libc and /dev reads, swapped out in tests.
 var (
 	aixProcesses  = common.AIXProcesses
 	aixProcessEnv = common.AIXProcessEnv
+	aixTTYName    = lookupAIXTTY
 )
+
+// lookupAIXTTY returns the /dev path, relative to /dev, of the terminal with device number dev.
+func lookupAIXTTY(_ uint64) string {
+	return ""
+}
 
 // aixPSEntry is one process's counters in the snapshot.
 type aixPSEntry struct {
