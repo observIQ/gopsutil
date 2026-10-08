@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: BSD-3-Clause
+//go:build aix && !cgo
+
+package common
+
+import (
+	"testing"
+	"unsafe"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The expected sizes and offsets come from gcc's sizeof/offsetof against libperfstat.h,
+// identical on AIX 7.2 TL5 and 7.3 TL4.
+func TestPerfstatLayouts(t *testing.T) {
+	assert.Equal(t, uintptr(640), unsafe.Sizeof(PerfstatCPU{}))
+	assert.Equal(t, uintptr(64), unsafe.Offsetof(PerfstatCPU{}.User))
+	assert.Equal(t, uintptr(80), unsafe.Offsetof(PerfstatCPU{}.Idle))
+	assert.Equal(t, uintptr(88), unsafe.Offsetof(PerfstatCPU{}.Wait))
+
+	assert.Equal(t, uintptr(696), unsafe.Sizeof(PerfstatCPUTotal{}))
+	assert.Equal(t, uintptr(8), unsafe.Offsetof(PerfstatCPUTotal{}.Description))
+	assert.Equal(t, uintptr(80), unsafe.Offsetof(PerfstatCPUTotal{}.User))
+	assert.Equal(t, uintptr(96), unsafe.Offsetof(PerfstatCPUTotal{}.Idle))
+	assert.Equal(t, uintptr(104), unsafe.Offsetof(PerfstatCPUTotal{}.Wait))
+	assert.Equal(t, uintptr(192), unsafe.Offsetof(PerfstatCPUTotal{}.Lbolt))
+	assert.Equal(t, uintptr(200), unsafe.Offsetof(PerfstatCPUTotal{}.LoadAvg))
+}
+
+func TestPerfstatCPUStats_Live(t *testing.T) {
+	total, err := PerfstatCPUTotalStat()
+	require.NoError(t, err)
+	assert.Positive(t, total.NCPUs)
+	assert.Positive(t, total.Lbolt)
+	assert.NotEmpty(t, CString(total.Description[:]))
+
+	cpus, err := PerfstatCPUStats()
+	require.NoError(t, err)
+	require.Len(t, cpus, int(total.NCPUs))
+	assert.Equal(t, "cpu0", CString(cpus[0].Name[:]))
+
+	var idle uint64
+	for _, c := range cpus {
+		idle += c.Idle
+	}
+	// Both reads are cumulative, so the per-CPU sum taken second can only be at or above the total.
+	assert.GreaterOrEqual(t, idle, total.Idle)
+}

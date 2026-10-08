@@ -16,6 +16,12 @@ import (
 // prtconfOutput caches the output of prtconf, which returns static CPU
 // hardware information (model, speed, count) that does not change at runtime.
 // Caching avoids spawning a subprocess on every InfoWithContext call.
+// perfstat reads, swapped out in tests.
+var (
+	perfstatCPUStats     = common.PerfstatCPUStats
+	perfstatCPUTotalStat = common.PerfstatCPUTotalStat
+)
+
 var (
 	prtconfOnce   sync.Once
 	prtconfOutput []byte

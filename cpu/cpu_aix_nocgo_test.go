@@ -36,57 +36,42 @@ func (t testInvoker) CommandWithContext(_ context.Context, name string, arg ...s
 	return t.Command(name, arg...)
 }
 
-func TestTimesWithContextAndInterval_PerCPU(t *testing.T) {
-	origInvoke := invoke
-	invoke = testInvoker{}
-	defer func() { invoke = origInvoke }()
-
-	// Fixture sar-u-PALL101 was captured with interval=10, count=1
-	stats, err := timesWithContextAndInterval(context.Background(), true, 10)
-	require.NoError(t, err)
-
-	// Fixture has 4 per-CPU rows (cpus 0-3) plus the aggregate line (-)
-	// The aggregate line has "-" as cpu field, which fails Atoi -> gets skipped
-	require.Len(t, stats, 4, "expected 4 per-CPU entries")
-
-	// CPU 0: 1 %usr, 11 %sys, 0 %wio, 88 %idle
-	assert.Equal(t, "0", stats[0].CPU)
-	assert.InDelta(t, 1.0, stats[0].User, 0.01)
-	assert.InDelta(t, 11.0, stats[0].System, 0.01)
-	assert.InDelta(t, 0.0, stats[0].Iowait, 0.01)
-	assert.InDelta(t, 88.0, stats[0].Idle, 0.01)
-
-	// CPU 1: 0 %usr, 0 %sys, 0 %wio, 100 %idle
-	assert.Equal(t, "1", stats[1].CPU)
-	assert.InDelta(t, 0.0, stats[1].User, 0.01)
-	assert.InDelta(t, 0.0, stats[1].System, 0.01)
-	assert.InDelta(t, 0.0, stats[1].Iowait, 0.01)
-	assert.InDelta(t, 100.0, stats[1].Idle, 0.01)
-
-	// CPU 2: same as CPU 1
-	assert.Equal(t, "2", stats[2].CPU)
-	assert.InDelta(t, 100.0, stats[2].Idle, 0.01)
-
-	// CPU 3: same as CPU 1
-	assert.Equal(t, "3", stats[3].CPU)
-	assert.InDelta(t, 100.0, stats[3].Idle, 0.01)
+func perfstatName(s string) (b [64]byte) {
+	copy(b[:], s)
+	return b
 }
 
-func TestTimesWithContextAndInterval_Aggregate(t *testing.T) {
-	origInvoke := invoke
-	invoke = testInvoker{}
-	defer func() { invoke = origInvoke }()
+func useFakePerfstat(t *testing.T, cpus []common.PerfstatCPU, total *common.PerfstatCPUTotal) {
+	t.Helper()
+	origCPUs, origTotal := perfstatCPUStats, perfstatCPUTotalStat
+	perfstatCPUStats = func() ([]common.PerfstatCPU, error) { return cpus, nil }
+	perfstatCPUTotalStat = func() (*common.PerfstatCPUTotal, error) { return total, nil }
+	t.Cleanup(func() { perfstatCPUStats, perfstatCPUTotalStat = origCPUs, origTotal })
+}
 
-	// Fixture sar-u101 was captured with interval=10, count=1
-	stats, err := timesWithContextAndInterval(context.Background(), false, 10)
+func TestTimesWithContext_PerCPUFromPerfstat(t *testing.T) {
+	useFakePerfstat(t, []common.PerfstatCPU{
+		{Name: perfstatName("cpu0"), User: 250, Sys: 150, Idle: 9500, Wait: 100},
+		{Name: perfstatName("cpu1"), User: 0, Sys: 30, Idle: 9970, Wait: 0},
+	}, nil)
+
+	stats, err := TimesWithContext(context.Background(), true)
 	require.NoError(t, err)
-	require.Len(t, stats, 1)
+	// perfstat counts 100 ticks per second.
+	assert.Equal(t, []TimesStat{
+		{CPU: "cpu0", User: 2.5, System: 1.5, Idle: 95, Iowait: 1},
+		{CPU: "cpu1", User: 0, System: 0.3, Idle: 99.7, Iowait: 0},
+	}, stats)
+}
 
-	assert.Equal(t, "cpu-total", stats[0].CPU)
-	assert.InDelta(t, 0.0, stats[0].User, 0.01)
-	assert.InDelta(t, 3.0, stats[0].System, 0.01)
-	assert.InDelta(t, 0.0, stats[0].Iowait, 0.01)
-	assert.InDelta(t, 96.0, stats[0].Idle, 0.01)
+func TestTimesWithContext_TotalFromPerfstat(t *testing.T) {
+	useFakePerfstat(t, nil, &common.PerfstatCPUTotal{User: 257821, Sys: 197820, Idle: 679600884, Wait: 3855})
+
+	stats, err := TimesWithContext(context.Background(), false)
+	require.NoError(t, err)
+	assert.Equal(t, []TimesStat{
+		{CPU: "cpu-total", User: 2578.21, System: 1978.2, Idle: 6796008.84, Iowait: 38.55},
+	}, stats)
 }
 
 func TestInfoWithContext(t *testing.T) {
