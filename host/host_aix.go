@@ -69,15 +69,6 @@ func HostIDWithContext(ctx context.Context) (string, error) {
 	return hostIDVal, hostIDErr
 }
 
-func BootTimeWithContext(ctx context.Context) (btime uint64, err error) {
-	return common.BootTimeWithContext(ctx, getInvoker())
-}
-
-// Uses ps to get the elapsed time for PID 1 in DAYS-HOURS:MINUTES:SECONDS format.
-func UptimeWithContext(ctx context.Context) (uint64, error) {
-	return common.UptimeWithContext(ctx, getInvoker())
-}
-
 // aixUtmp matches the AIX /etc/utmp binary record layout (see /usr/include/utmp.h).
 // Reading utmp directly is ~180x faster than spawning `who` and avoids locale
 // dependencies when parsing timestamps — ut_time is an epoch value.

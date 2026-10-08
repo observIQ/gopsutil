@@ -4,17 +4,13 @@
 package load
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
-
-var separator = regexp.MustCompile(`,?\s+`)
 
 // perfstatCPUTotalStat reads perfstat_cpu_total, swapped out in tests.
 var perfstatCPUTotalStat = common.PerfstatCPUTotalStat
@@ -30,33 +26,13 @@ func getInvoker() common.Invoker {
 	return common.Invoke{}
 }
 
-func AvgWithContext(ctx context.Context) (*AvgStat, error) {
-	line, err := getInvoker().CommandWithContext(ctx, "uptime")
+func AvgWithContext(_ context.Context) (*AvgStat, error) {
+	t, err := perfstatCPUTotalStat()
 	if err != nil {
 		return nil, err
 	}
-
-	idx := bytes.Index(line, []byte("load average:"))
-	if idx < 0 {
-		return nil, common.ErrNotImplementedError
-	}
-	ret := &AvgStat{}
-
-	p := separator.Split(string(line[idx:]), 5)
-	if 4 < len(p) && p[0] == "load" && p[1] == "average:" {
-		if t, err := strconv.ParseFloat(p[2], 64); err == nil {
-			ret.Load1 = t
-		}
-		if t, err := strconv.ParseFloat(p[3], 64); err == nil {
-			ret.Load5 = t
-		}
-		if t, err := strconv.ParseFloat(p[4], 64); err == nil {
-			ret.Load15 = t
-		}
-		return ret, nil
-	}
-
-	return nil, common.ErrNotImplementedError
+	load := func(v uint64) float64 { return float64(v) / common.AIXLoadAvgScale }
+	return &AvgStat{Load1: load(t.LoadAvg[0]), Load5: load(t.LoadAvg[1]), Load15: load(t.LoadAvg[2])}, nil
 }
 
 func MiscWithContext(ctx context.Context) (*MiscStat, error) {

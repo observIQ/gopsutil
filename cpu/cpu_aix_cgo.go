@@ -5,10 +5,8 @@ package cpu
 
 import (
 	"context"
-	"time"
 
 	"github.com/power-devops/perfstat"
-	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
 func TimesWithContext(ctx context.Context, percpu bool) ([]TimesStat, error) {
@@ -78,12 +76,4 @@ func CountsWithContext(ctx context.Context, logical bool) (int, error) {
 		return 0, err
 	}
 	return int(p.OnlineVCpus), nil
-}
-
-// aixPercent returns ErrNotImplementedError for CGO builds because the CGO
-// TimesWithContext returns cumulative tick counters (from perfstat), not
-// instantaneous percentages. The caller in cpu.go falls through to the
-// standard delta-based calculation when this returns an error.
-func aixPercent(_ context.Context, _ time.Duration, _ bool) ([]float64, error) {
-	return nil, common.ErrNotImplementedError
 }
