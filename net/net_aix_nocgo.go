@@ -12,6 +12,9 @@ import (
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
+// perfstatNetInterfaceStats reads perfstat_netinterface, swapped out in tests.
+var perfstatNetInterfaceStats = common.PerfstatNetInterfaceStats
+
 func parseNetstatI(output string) ([]IOCountersStat, error) {
 	lines := strings.Split(string(output), "\n")
 	ret := make([]IOCountersStat, 0, len(lines)-1)
