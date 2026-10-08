@@ -39,45 +39,37 @@ func AvgWithContext(_ context.Context) (*AvgStat, error) {
 	return &AvgStat{Load1: load(t.LoadAvg[0]), Load5: load(t.LoadAvg[1]), Load15: load(t.LoadAvg[2])}, nil
 }
 
+// MiscWithContext counts processes from getprocs64 and getthrds64, leaving out kernel
+// processes. A process is running when one of its threads is runnable, and blocked when
+// one waits in the VMM wait queue, the same queues vmstat reports as r and b.
 func MiscWithContext(ctx context.Context) (*MiscStat, error) {
-	out, err := getInvoker().CommandWithContext(ctx, "ps", "-e", "-o", "state")
+	procs, err := aixProcesses()
+	if err != nil {
+		return nil, err
+	}
+	threads, err := aixThreads()
 	if err != nil {
 		return nil, err
 	}
 
 	ret := &MiscStat{}
-	lines := strings.Split(string(out), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		// Skip header line and empty lines
-		if line == "ST" || line == "STATE" || line == "S" || line == "" {
-			continue
+	for i := range procs {
+		if procs[i].Flags&common.AIXProcKernel == 0 {
+			ret.ProcsTotal++
 		}
-
-		// Count processes by state (AIX process states from official docs)
-		// A = Active (running or ready to run)
-		// W = Swapped (not in main memory)
-		// I = Intermediate (being created)
-		// Z = Zombie/defunct (terminated, waiting for parent)
-		// T = Stopped (trace stopped)
-		// O = Nonexistent
-		switch line {
-		case "A", "I":
-			// A = Active (running or ready to run)
-			// I = Intermediate (being created via fork — transient state where
-			//     the kernel is actively consuming CPU cycles, so classified as
-			//     running to match AIX's own definition of active processes)
-			ret.ProcsRunning++
-		case "W":
-			// Swapped processes (blocked/not runnable)
-			ret.ProcsBlocked++
-		case "Z", "T":
-			// Zombie or Stopped processes - counted in total only
-		}
-		ret.ProcsTotal++
 	}
+	running, blocked := map[int32]bool{}, map[int32]bool{}
+	for i := range threads {
+		th := &threads[i]
+		switch {
+		case th.Flags&common.AIXThreadKernel != 0:
+		case th.State == common.AIXThreadRunnable:
+			running[th.Pid] = true
+		case th.State == common.AIXThreadSleeping && common.AIXVMMWait(th.WaitType):
+			blocked[th.Pid] = true
+		}
+	}
+	ret.ProcsRunning, ret.ProcsBlocked = len(running), len(blocked)
 
 	// Get context switches, interrupts, and syscalls from vmstat.
 	// These are cumulative since-boot counters from vmstat -s.
