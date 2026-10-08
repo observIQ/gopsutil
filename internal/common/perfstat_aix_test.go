@@ -156,3 +156,10 @@ func TestAIXMounts_Live(t *testing.T) {
 	assert.Equal(t, int32(0), mounts[i].GfsType, "jfs2")
 	assert.Contains(t, mounts[i].Args, "rw")
 }
+
+func TestAIXProcessEnv_Live(t *testing.T) {
+	// getevars returns the environment the process started with, like ps eww.
+	env, err := AIXProcessEnv(int32(os.Getpid()))
+	require.NoError(t, err)
+	assert.Contains(t, env, "HOME="+os.Getenv("HOME"))
+}
