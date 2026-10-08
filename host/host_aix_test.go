@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
 // mockInvoker returns canned output for specific commands.
@@ -158,11 +160,20 @@ func TestVirtualizationWithContext(t *testing.T) {
 	}
 }
 
+func useFakePartition(t *testing.T, name string) {
+	t.Helper()
+	orig := perfstatPartitionTotalStat
+	perfstatPartitionTotalStat = func() (*common.PerfstatPartitionTotal, error) {
+		var p common.PerfstatPartitionTotal
+		copy(p.Name[:], name)
+		return &p, nil
+	}
+	t.Cleanup(func() { perfstatPartitionTotalStat = orig })
+}
+
 func TestVirtualizationWithContext_LPAR(t *testing.T) {
-	withMockInvoker(t, map[string]string{
-		"uname -W": "0\n",
-		"uname -L": "25 soaix422\n",
-	})
+	withMockInvoker(t, map[string]string{"uname -W": "0\n"})
+	useFakePartition(t, "soaix422")
 
 	system, role, err := VirtualizationWithContext(context.TODO())
 	require.NoError(t, err)
@@ -171,10 +182,8 @@ func TestVirtualizationWithContext_LPAR(t *testing.T) {
 }
 
 func TestVirtualizationWithContext_WPAR(t *testing.T) {
-	withMockInvoker(t, map[string]string{
-		"uname -W": "2\n",
-		"uname -L": "25 soaix422\n",
-	})
+	withMockInvoker(t, map[string]string{"uname -W": "2\n"})
+	useFakePartition(t, "soaix422")
 
 	system, role, err := VirtualizationWithContext(context.TODO())
 	require.NoError(t, err)
@@ -183,10 +192,8 @@ func TestVirtualizationWithContext_WPAR(t *testing.T) {
 }
 
 func TestVirtualizationWithContext_BareMetal(t *testing.T) {
-	withMockInvoker(t, map[string]string{
-		"uname -W": "0\n",
-		"uname -L": "-1 NULL\n",
-	})
+	withMockInvoker(t, map[string]string{"uname -W": "0\n"})
+	useFakePartition(t, "NULL")
 
 	system, role, err := VirtualizationWithContext(context.TODO())
 	require.NoError(t, err)

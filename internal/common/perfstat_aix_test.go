@@ -71,6 +71,9 @@ func TestPerfstatLayouts(t *testing.T) {
 	assert.Equal(t, uintptr(208), unsafe.Offsetof(PerfstatPagingSpace{}.MBSize))
 	assert.Equal(t, uintptr(216), unsafe.Offsetof(PerfstatPagingSpace{}.MBUsed))
 
+	assert.Equal(t, uintptr(688), unsafe.Sizeof(PerfstatPartitionTotal{}))
+	assert.Equal(t, uintptr(68), unsafe.Offsetof(PerfstatPartitionTotal{}.LparID))
+
 	assert.Equal(t, uintptr(5024), unsafe.Sizeof(AIXProcess{}))
 	assert.Equal(t, uintptr(52), unsafe.Offsetof(AIXProcess{}.State))
 	assert.Equal(t, uintptr(56), unsafe.Offsetof(AIXProcess{}.Flags))
@@ -162,4 +165,11 @@ func TestAIXProcessEnv_Live(t *testing.T) {
 	env, err := AIXProcessEnv(int32(os.Getpid()))
 	require.NoError(t, err)
 	assert.Contains(t, env, "HOME="+os.Getenv("HOME"))
+}
+
+func TestPerfstatPartitionTotalStat_Live(t *testing.T) {
+	p, err := PerfstatPartitionTotalStat()
+	require.NoError(t, err)
+	assert.Positive(t, p.LparID, "the test boxes are LPARs")
+	assert.NotEmpty(t, CString(p.Name[:]))
 }
