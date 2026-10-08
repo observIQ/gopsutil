@@ -40,6 +40,9 @@ const aixPSMaxAge = time.Second
 
 var aixNow = time.Now
 
+// aixProcesses reads the getprocs64 process table, swapped out in tests.
+var aixProcesses = common.AIXProcesses
+
 // aixPSEntry is one process's row in the snapshot, each column as ps printed it.
 // tdiskio is "-" while WLM is not running; a zombie prints both columns empty.
 type aixPSEntry struct {
