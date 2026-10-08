@@ -56,3 +56,16 @@ func TestMiscWithContext_ProcessStates(t *testing.T) {
 	assert.Equal(t, 2, misc.ProcsBlocked, "2 W = 2 blocked")
 	assert.Equal(t, 8, misc.ProcsTotal, "8 total processes")
 }
+
+func TestAvgWithContext_FromPerfstat(t *testing.T) {
+	orig := perfstatCPUTotalStat
+	perfstatCPUTotalStat = func() (*common.PerfstatCPUTotal, error) {
+		// perfstat load averages are fixed point, scaled by 1<<16.
+		return &common.PerfstatCPUTotal{LoadAvg: [3]uint64{65536, 32768, 98304}}, nil
+	}
+	defer func() { perfstatCPUTotalStat = orig }()
+
+	avg, err := AvgWithContext(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, &AvgStat{Load1: 1, Load5: 0.5, Load15: 1.5}, avg)
+}
