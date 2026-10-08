@@ -16,6 +16,9 @@ import (
 
 var separator = regexp.MustCompile(`,?\s+`)
 
+// perfstatCPUTotalStat reads perfstat_cpu_total, swapped out in tests.
+var perfstatCPUTotalStat = common.PerfstatCPUTotalStat
+
 // testInvoker is used for dependency injection in tests
 var testInvoker common.Invoker
 
