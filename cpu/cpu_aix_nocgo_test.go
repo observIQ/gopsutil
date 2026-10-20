@@ -97,3 +97,23 @@ func TestInfoWithContext(t *testing.T) {
 	assert.Equal(t, int32(4), c.Cores)
 	assert.InDelta(t, 1000.0, c.Mhz, 0.01)
 }
+
+func TestCountsWithContext(t *testing.T) {
+	origInvoke := invoke
+	invoke = testInvoker{}
+	prtconfOnce = sync.Once{}
+	defer func() {
+		invoke = origInvoke
+		prtconfOnce = sync.Once{}
+	}()
+	// prtconf reports 4 virtual processors; with SMT8 that is 32 logical CPUs.
+	useFakePerfstat(t, nil, &common.PerfstatCPUTotal{NCPUs: 32, NCPUsCfg: 32})
+
+	logical, err := CountsWithContext(context.Background(), true)
+	require.NoError(t, err)
+	assert.Equal(t, 32, logical)
+
+	physical, err := CountsWithContext(context.Background(), false)
+	require.NoError(t, err)
+	assert.Equal(t, 4, physical)
+}
