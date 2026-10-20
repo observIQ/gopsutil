@@ -104,7 +104,16 @@ func InfoWithContext(ctx context.Context) ([]InfoStat, error) {
 	return []InfoStat{ret}, nil
 }
 
-func CountsWithContext(ctx context.Context, _ bool) (int, error) {
+// CountsWithContext returns the configured logical CPUs from perfstat, as the cgo
+// build does, or the virtual processors from prtconf for the physical count.
+func CountsWithContext(ctx context.Context, logical bool) (int, error) {
+	if logical {
+		t, err := perfstatCPUTotalStat()
+		if err != nil {
+			return 0, err
+		}
+		return int(t.NCPUsCfg), nil
+	}
 	info, err := InfoWithContext(ctx)
 	if err == nil {
 		return int(info[0].Cores), nil
