@@ -5,26 +5,16 @@ package cpu
 
 import (
 	"context"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/shirou/gopsutil/v4/internal/common"
 )
 
 // perfstat reads, swapped out in tests.
 var (
-	perfstatCPUStats     = common.PerfstatCPUStats
-	perfstatCPUTotalStat = common.PerfstatCPUTotalStat
-)
-
-// prtconfOutput caches the output of prtconf, which returns static CPU
-// hardware information (model, speed, count) that does not change at runtime.
-// Caching avoids spawning a subprocess on every InfoWithContext call.
-var (
-	prtconfOnce   sync.Once
-	prtconfOutput []byte
-	prtconfErr    error
+	perfstatCPUStats           = common.PerfstatCPUStats
+	perfstatCPUTotalStat       = common.PerfstatCPUTotalStat
+	perfstatPartitionTotalStat = common.PerfstatPartitionTotalStat
 )
 
 // TimesWithContext returns cumulative CPU time in seconds from perfstat tick counters.
@@ -49,63 +39,36 @@ func TimesWithContext(_ context.Context, percpu bool) ([]TimesStat, error) {
 	return ret, nil
 }
 
+// InfoWithContext reads CPU details from perfstat rather than prtconf, which takes
+// seconds on AIX and outlasts short caller timeouts.
 func InfoWithContext(ctx context.Context) ([]InfoStat, error) {
-	prtconfOnce.Do(func() {
-		prtconfOutput, prtconfErr = invoke.CommandWithContext(ctx, "prtconf")
-	})
-	if prtconfErr != nil {
-		return nil, prtconfErr
+	total, err := perfstatCPUTotalStat()
+	if err != nil {
+		return nil, err
 	}
-	out := prtconfOutput
+	partition, err := perfstatPartitionTotalStat()
+	if err != nil {
+		return nil, err
+	}
+	model, err := invoke.CommandWithContext(ctx, "uname", "-M")
+	if err != nil {
+		return nil, err
+	}
 
-	ret := InfoStat{}
-	for _, line := range strings.Split(string(out), "\n") {
-		switch {
-		case strings.HasPrefix(line, "Number Of Processors:"):
-			p := strings.Fields(line)
-			if len(p) > 3 {
-				if t, err := strconv.ParseUint(p[3], 10, 64); err == nil {
-					ret.Cores = int32(t)
-				}
-			}
-		case strings.HasPrefix(line, "Processor Clock Speed:"):
-			p := strings.Fields(line)
-			if len(p) > 4 {
-				if t, err := strconv.ParseFloat(p[3], 64); err == nil {
-					switch strings.ToUpper(p[4]) {
-					case "MHZ":
-						ret.Mhz = t
-					case "GHZ":
-						ret.Mhz = t * 1000.0
-					case "KHZ":
-						ret.Mhz = t / 1000.0
-					default:
-						ret.Mhz = t
-					}
-				}
-			}
-		case strings.HasPrefix(line, "System Model:"):
-			p := strings.Split(string(line), ":")
-			if p != nil {
-				ret.VendorID = strings.TrimSpace(p[1])
-			}
-		case strings.HasPrefix(line, "Processor Type:"):
-			p := strings.Split(string(line), ":")
-			if p != nil {
-				ret.ModelName = strings.TrimSpace(p[1])
-				c := strings.Split(string(p[1]), "_")
-				if c != nil {
-					ret.Family = strings.TrimSpace(c[0])
-					ret.Model = strings.TrimSpace(c[1])
-				}
-			}
-		}
+	ret := InfoStat{
+		VendorID:  strings.TrimSpace(string(model)),
+		ModelName: common.CString(total.Description[:]),
+		Cores:     partition.OnlineCPUs,
+		Mhz:       float64(total.ProcessorHz) / 1e6,
+	}
+	if family, cpuModel, ok := strings.Cut(ret.ModelName, "_"); ok {
+		ret.Family, ret.Model = family, cpuModel
 	}
 	return []InfoStat{ret}, nil
 }
 
 // CountsWithContext returns the configured logical CPUs from perfstat, as the cgo
-// build does, or the virtual processors from prtconf for the physical count.
+// build does, or the online virtual processors for the physical count.
 func CountsWithContext(ctx context.Context, logical bool) (int, error) {
 	if logical {
 		t, err := perfstatCPUTotalStat()

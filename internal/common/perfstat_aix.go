@@ -238,7 +238,10 @@ type PerfstatPartitionTotal struct {
 	Name   [64]byte // "NULL" outside a logical partition, as uname -L prints
 	_      [68 - 64]byte
 	LparID int32
-	_      [688 - 72]byte
+	_      [80 - 72]byte
+	// OnlineCPUs is the number of virtual processors online, as prtconf reports Number Of Processors.
+	OnlineCPUs int32
+	_          [688 - 84]byte
 }
 
 // PerfstatPartitionTotalStat reads perfstat_partition_total.
