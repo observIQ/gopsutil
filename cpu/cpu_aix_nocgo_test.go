@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,40 +73,60 @@ func TestTimesWithContext_TotalFromPerfstat(t *testing.T) {
 	}, stats)
 }
 
+func useFakePartition(t *testing.T, p *common.PerfstatPartitionTotal) {
+	t.Helper()
+	orig := perfstatPartitionTotalStat
+	perfstatPartitionTotalStat = func() (*common.PerfstatPartitionTotal, error) { return p, nil }
+	t.Cleanup(func() { perfstatPartitionTotalStat = orig })
+}
+
 func TestInfoWithContext(t *testing.T) {
 	origInvoke := invoke
 	invoke = testInvoker{}
-	// InfoWithContext caches prtconf output via prtconfOnce; reset it so the
-	// fixture invoker is used even if a prior call already populated the cache.
-	prtconfOnce = sync.Once{}
-	defer func() {
-		invoke = origInvoke
-		prtconfOnce = sync.Once{}
-	}()
+	defer func() { invoke = origInvoke }()
+	useFakePerfstat(t, nil, &common.PerfstatCPUTotal{NCPUs: 32, NCPUsCfg: 32, Description: perfstatName("PowerPC_POWER10"), ProcessorHz: 3350000000})
+	useFakePartition(t, &common.PerfstatPartitionTotal{OnlineCPUs: 4})
 
 	info, err := InfoWithContext(context.Background())
 	require.NoError(t, err)
 	require.Len(t, info, 1)
 
 	c := info[0]
-	assert.Equal(t, "IBM pSeries (emulated by qemu)", c.VendorID)
+	assert.Equal(t, "IBM,9105-22A", c.VendorID)
 	assert.Equal(t, "PowerPC", c.Family)
-	assert.Equal(t, "POWER8", c.Model)
-	assert.Equal(t, "PowerPC_POWER8", c.ModelName)
+	assert.Equal(t, "POWER10", c.Model)
+	assert.Equal(t, "PowerPC_POWER10", c.ModelName)
 	assert.Equal(t, int32(4), c.Cores)
-	assert.InDelta(t, 1000.0, c.Mhz, 0.01)
+	assert.InDelta(t, 3350.0, c.Mhz, 0.01)
+}
+
+func TestInfoWithContext_DoesNotRunPrtconf(t *testing.T) {
+	origInvoke := invoke
+	invoke = &recordingInvoker{}
+	defer func() { invoke = origInvoke }()
+	useFakePerfstat(t, nil, &common.PerfstatCPUTotal{Description: perfstatName("PowerPC_POWER10")})
+	useFakePartition(t, &common.PerfstatPartitionTotal{OnlineCPUs: 4})
+
+	_, err := InfoWithContext(context.Background())
+	require.NoError(t, err)
+	assert.NotContains(t, invoke.(*recordingInvoker).names, "prtconf", "full prtconf takes seconds on AIX and outlasts short detector timeouts")
+}
+
+// recordingInvoker records the commands run and answers uname -M.
+type recordingInvoker struct {
+	common.FakeInvoke
+	names []string
+}
+
+func (r *recordingInvoker) CommandWithContext(_ context.Context, name string, _ ...string) ([]byte, error) {
+	r.names = append(r.names, filepath.Base(name))
+	return []byte("IBM,9105-22A\n"), nil
 }
 
 func TestCountsWithContext(t *testing.T) {
-	origInvoke := invoke
-	invoke = testInvoker{}
-	prtconfOnce = sync.Once{}
-	defer func() {
-		invoke = origInvoke
-		prtconfOnce = sync.Once{}
-	}()
-	// prtconf reports 4 virtual processors; with SMT8 that is 32 logical CPUs.
+	// 4 virtual processors online; with SMT8 that is 32 logical CPUs.
 	useFakePerfstat(t, nil, &common.PerfstatCPUTotal{NCPUs: 32, NCPUsCfg: 32})
+	useFakePartition(t, &common.PerfstatPartitionTotal{OnlineCPUs: 4})
 
 	logical, err := CountsWithContext(context.Background(), true)
 	require.NoError(t, err)
