@@ -200,3 +200,51 @@ func TestVirtualizationWithContext_BareMetal(t *testing.T) {
 	assert.Empty(t, system)
 	assert.Empty(t, role)
 }
+
+// resetHostCache clears the cached static host info so each test starts cold.
+func resetHostCache() {
+	hostIDCache = cached[string]{}
+	platformCache = cached[platformInfo]{}
+	kernelVerCache = cached[string]{}
+	kernelArchCache = cached[string]{}
+}
+
+// A failed lookup must not be cached: the next call has to run the command
+// again so a transient failure (such as a context deadline) can recover.
+func TestStaticHostInfoRetriesAfterFailure(t *testing.T) {
+	ok := map[string]string{
+		"uname -u":    "IBM,0221D80FV\n",
+		"oslevel":     "7.3.0.0\n",
+		"oslevel -s":  "7300-03-00-2446\n",
+		"bootinfo -y": "64\n",
+	}
+	ctx := context.TODO()
+
+	tests := map[string]struct {
+		call func() (string, error)
+		want string
+	}{
+		"HostID": {func() (string, error) { return HostIDWithContext(ctx) }, "IBM,0221D80FV"},
+		"PlatformInformation": {func() (string, error) {
+			_, _, v, err := PlatformInformationWithContext(ctx)
+			return v, err
+		}, "7.3.0.0"},
+		"KernelVersion": {func() (string, error) { return KernelVersionWithContext(ctx) }, "7300-03-00-2446"},
+		"KernelArch":    {KernelArch, "64"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			resetHostCache()
+			t.Cleanup(resetHostCache)
+
+			withMockInvoker(t, map[string]string{})
+			_, err := tt.call()
+			require.Error(t, err)
+
+			withMockInvoker(t, ok)
+			got, err := tt.call()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

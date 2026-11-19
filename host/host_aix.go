@@ -39,36 +39,45 @@ func getInvoker() common.Invoker {
 // Static host information is cached because these values (hardware ID,
 // platform name, OS version, kernel version, architecture) do not change
 // at runtime. Caching avoids spawning subprocesses on repeated queries.
+// Only successful lookups are cached, so a transient failure (such as the
+// first caller's context expiring mid-command) is retried on the next call.
+type cached[T any] struct {
+	mu   sync.Mutex
+	done bool
+	val  T
+}
+
+func (c *cached[T]) get(f func() (T, error)) (T, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return c.val, nil
+	}
+	v, err := f()
+	if err != nil {
+		return v, err
+	}
+	c.val, c.done = v, true
+	return v, nil
+}
+
+type platformInfo struct{ platform, family, version string }
+
 var (
-	hostIDOnce sync.Once
-	hostIDVal  string
-	hostIDErr  error
-
-	platformOnce sync.Once
-	platformVal  string
-	familyVal    string
-	versionVal   string
-	platformErr  error
-
-	kernelVerOnce sync.Once
-	kernelVerVal  string
-	kernelVerErr  error
-
-	kernelArchOnce sync.Once
-	kernelArchVal  string
-	kernelArchErr  error
+	hostIDCache     cached[string]
+	platformCache   cached[platformInfo]
+	kernelVerCache  cached[string]
+	kernelArchCache cached[string]
 )
 
 func HostIDWithContext(ctx context.Context) (string, error) {
-	hostIDOnce.Do(func() {
+	return hostIDCache.get(func() (string, error) {
 		out, err := getInvoker().CommandWithContext(ctx, "uname", "-u")
 		if err != nil {
-			hostIDErr = err
-			return
+			return "", err
 		}
-		hostIDVal = strings.Split(string(out), "\n")[0]
+		return strings.Split(string(out), "\n")[0], nil
 	})
-	return hostIDVal, hostIDErr
 }
 
 // aixUtmp matches the AIX /etc/utmp binary record layout (see /usr/include/utmp.h).
@@ -128,57 +137,50 @@ func UsersWithContext(_ context.Context) ([]UserStat, error) {
 }
 
 // PlatformInformationWithContext returns the platform name, family, and OS
-// version. These are immutable system identifiers cached after first query.
+// version. These are immutable system identifiers cached after the first successful query.
 func PlatformInformationWithContext(ctx context.Context) (platform, family, version string, err error) {
-	platformOnce.Do(func() {
+	info, err := platformCache.get(func() (platformInfo, error) {
 		// Set the platform (which should always, and only be, "AIX") from uname(2)
 		var utsname unix.Utsname
 		if err := unix.Uname(&utsname); err != nil {
-			platformErr = err
-			return
+			return platformInfo{}, err
 		}
-		platformVal = unix.ByteSliceToString(utsname.Sysname[:])
-		familyVal = platformVal
+		p := unix.ByteSliceToString(utsname.Sysname[:])
 
 		out, err := getInvoker().CommandWithContext(ctx, "oslevel")
 		if err != nil {
-			platformErr = err
-			return
+			return platformInfo{}, err
 		}
-		versionVal = strings.TrimRight(string(out), "\n")
+		return platformInfo{platform: p, family: p, version: strings.TrimRight(string(out), "\n")}, nil
 	})
-	return platformVal, familyVal, versionVal, platformErr
+	return info.platform, info.family, info.version, err
 }
 
 // KernelVersionWithContext returns the kernel version (e.g., "7300-03-00-2446").
-// This is an immutable system identifier cached after first query.
+// This is an immutable system identifier cached after the first successful query.
 func KernelVersionWithContext(ctx context.Context) (version string, err error) {
-	kernelVerOnce.Do(func() {
+	return kernelVerCache.get(func() (string, error) {
 		out, err := getInvoker().CommandWithContext(ctx, "oslevel", "-s")
 		if err != nil {
-			kernelVerErr = err
-			return
+			return "", err
 		}
-		kernelVerVal = strings.TrimRight(string(out), "\n")
+		return strings.TrimRight(string(out), "\n"), nil
 	})
-	return kernelVerVal, kernelVerErr
 }
 
 // KernelArch returns the hardware architecture (e.g., "64").
-// This is an immutable system identifier cached after first query.
+// This is an immutable system identifier cached after the first successful query.
 func KernelArch() (arch string, err error) {
-	kernelArchOnce.Do(func() {
+	return kernelArchCache.get(func() (string, error) {
 		out, err := getInvoker().Command("getconf", "KERNEL_BITMODE")
 		if err != nil {
 			out, err = getInvoker().Command("bootinfo", "-y")
 			if err != nil {
-				kernelArchErr = err
-				return
+				return "", err
 			}
 		}
-		kernelArchVal = strings.TrimRight(string(out), "\n")
+		return strings.TrimRight(string(out), "\n"), nil
 	})
-	return kernelArchVal, kernelArchErr
 }
 
 // perfstatPartitionTotalStat reads perfstat_partition_total, swapped out in tests.
